@@ -1,0 +1,83 @@
+// Shared machinery for representation views.
+//
+// A view is created with create(container, callbacks) and returns:
+//   { setPath(path), highlight(pairId | null), destroy() }
+//
+// callbacks: { onHover(pairId), onLeave(), onEdit(newPath) }
+
+import { svgEl } from "./svg.js";
+
+// A hover-revealed grow/shrink button. cls is "grow" (amber +) or "shrink"
+// (red −). Reused across representations.
+export function makeAffordButton(cls, glyph) {
+  const btn = svgEl("g", { class: `afford ${cls}`, visibility: "hidden" });
+  btn.appendChild(svgEl("circle", { r: 11, cx: 0, cy: 0 }));
+  const t = svgEl("text", {
+    x: 0,
+    y: 0,
+    class: "afford-glyph",
+    "text-anchor": "middle",
+    "dominant-baseline": "central",
+  });
+  t.textContent = glyph;
+  btn.appendChild(t);
+  return btn;
+}
+
+export function showAffordButton(btn, x, y, onEdit, produce) {
+  btn.setAttribute("transform", `translate(${x},${y})`);
+  btn.style.visibility = "visible";
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const p = produce();
+    if (p) onEdit(p);
+  };
+}
+
+export function hideAffordButton(btn) {
+  btn.style.visibility = "hidden";
+  btn.onclick = null;
+}
+
+export function makeRegistry() {
+  // pairId -> array of DOM elements that should light up together.
+  return new Map();
+}
+
+export function register(registry, pairId, el) {
+  if (!registry.has(pairId)) registry.set(pairId, []);
+  registry.get(pairId).push(el);
+  el.dataset.pair = String(pairId);
+}
+
+// Highlight every part whose pair id lies in the inclusive range [lo, hi]
+// (a subtree). `currentEls` is the list of elements lit last time; returns the
+// new list. Pass range = null to clear.
+export function applyHighlight(registry, currentEls, range) {
+  for (const el of currentEls) el.classList.remove("hl");
+  const next = [];
+  if (range) {
+    for (let p = range[0]; p <= range[1]; p++) {
+      const els = registry.get(p);
+      if (!els) continue;
+      for (const el of els) {
+        el.classList.add("hl");
+        next.push(el);
+      }
+    }
+  }
+  return next;
+}
+
+// Wire an element so pointer enter/leave report a pair id, and click edits.
+export function makeInteractive(el, pairId, callbacks, editFn) {
+  el.classList.add("interactive");
+  el.addEventListener("pointerenter", () => callbacks.onHover(pairId));
+  el.addEventListener("pointerleave", () => callbacks.onLeave());
+  if (editFn) {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      editFn();
+    });
+  }
+}

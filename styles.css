@@ -1,0 +1,484 @@
+:root {
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --ink: #1a1d24;
+  --muted: #5c6472;
+  --line: #d8dde5;
+  --accent: #2f6df6;
+  --hl: #ff8a1e;
+  --hl-soft: rgba(255, 138, 30, 0.18);
+  --up: #2f9e6f;
+  --down: #c2544a;
+  --handle: #2f6df6;
+  --grow: #c97e14;
+  --shrink: #c2544a;
+  --shadow: 0 1px 3px rgba(20, 25, 40, 0.08), 0 8px 24px rgba(20, 25, 40, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216;
+    --panel: #171b21;
+    --ink: #e7eaf0;
+    --muted: #99a2b2;
+    --line: #2a313b;
+    --accent: #5b8bff;
+    --hl: #ffab4d;
+    --hl-soft: rgba(255, 171, 77, 0.22);
+    --up: #46c78d;
+    --down: #e5766b;
+    --handle: #5b8bff;
+    --grow: #efab4d;
+    --shrink: #e5766b;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+header {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2.2rem 1.5rem 0.5rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  color: var(--muted);
+  max-width: 60ch;
+  margin: 0.4rem 0 1.2rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.ctl span {
+  min-width: 1.2em;
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+button {
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.4rem 0.8rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+main {
+  max-width: 1100px;
+  margin: 1.2rem auto 0;
+  padding: 0 1.5rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.2rem;
+}
+
+@media (max-width: 780px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 1rem 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.side-tag {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+select {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.35rem 0.5rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  flex: 1;
+}
+
+.figure-host {
+  flex: 1;
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+  padding: 0.5rem 0;
+}
+
+.figure {
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  overflow: visible;
+}
+
+.blurb {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.4rem 0 0;
+  min-height: 3.4em;
+}
+
+footer {
+  max-width: 1100px;
+  margin: 1.4rem auto 2.5rem;
+  padding: 0 1.5rem;
+}
+
+footer p {
+  color: var(--muted);
+  font-size: 0.82rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+  max-width: 80ch;
+}
+
+/* ---- figure primitives ------------------------------------------------- */
+
+.interactive {
+  cursor: pointer;
+}
+
+.hl {
+  /* highlight is applied per-shape below via specific selectors */
+}
+
+/* Dyck path */
+.axis {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+.step {
+  stroke-width: 4;
+  stroke-linecap: round;
+  transition: stroke-width 0.1s;
+}
+.step.up {
+  stroke: var(--up);
+}
+.step.down {
+  stroke: var(--down);
+}
+.step.hl {
+  stroke: var(--hl);
+  stroke-width: 7;
+}
+.vertex {
+  fill: var(--muted);
+}
+
+/* handles */
+.handle {
+  fill: var(--handle);
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity 0.1s, transform 0.1s;
+}
+.handle:hover {
+  opacity: 1;
+}
+.handle.valley {
+  fill: var(--up);
+}
+.handle.peak {
+  fill: var(--down);
+}
+
+/* grow / shrink affordances (hover-revealed) */
+.afford-ring {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  opacity: 0.5;
+  pointer-events: none;
+}
+.afford {
+  cursor: pointer;
+}
+.afford circle {
+  fill: var(--panel);
+  stroke-width: 2;
+}
+.afford .afford-glyph {
+  font-size: 18px;
+  font-weight: 700;
+  pointer-events: none;
+}
+.afford.grow circle {
+  stroke: var(--grow);
+}
+.afford.grow .afford-glyph {
+  fill: var(--grow);
+}
+.afford.grow:hover circle {
+  fill: var(--grow);
+}
+.afford.grow:hover .afford-glyph {
+  fill: var(--panel);
+}
+.afford.shrink circle {
+  stroke: var(--shrink);
+}
+.afford.shrink .afford-glyph {
+  fill: var(--shrink);
+}
+.afford.shrink:hover circle {
+  fill: var(--shrink);
+}
+.afford.shrink:hover .afford-glyph {
+  fill: var(--panel);
+}
+.afford-reshape {
+  fill: var(--handle);
+  opacity: 0.6;
+  cursor: pointer;
+}
+.afford-reshape:hover {
+  opacity: 1;
+}
+
+/* parentheses */
+.paren {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 30px;
+  font-weight: 600;
+  fill: var(--ink);
+}
+.paren.hl {
+  fill: var(--hl);
+}
+
+/* subtree range shading (parens span band, permutation bounding box) */
+.range-band {
+  fill: var(--hl-soft);
+  stroke: var(--hl);
+  stroke-opacity: 0.5;
+  stroke-width: 1.5;
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+.range-band.on {
+  opacity: 1;
+}
+
+/* binary tree */
+.branch {
+  stroke: var(--line);
+  stroke-width: 2;
+}
+.treenode {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 2;
+  transition: fill 0.1s;
+}
+.treenode.hl {
+  fill: var(--hl);
+}
+.leaf {
+  fill: var(--muted);
+  opacity: 0.6;
+}
+
+/* triangulation */
+.triangle {
+  fill: var(--accent);
+  fill-opacity: 0.12;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-opacity: 0.4;
+  transition: fill-opacity 0.1s;
+}
+.triangle.hl {
+  fill: var(--hl);
+  fill-opacity: 0.4;
+  stroke: var(--hl);
+  stroke-opacity: 1;
+}
+.triangle.ghost {
+  fill: var(--shrink);
+  fill-opacity: 0.28;
+  stroke: var(--shrink);
+  stroke-opacity: 0.7;
+  pointer-events: none;
+}
+.polyedge {
+  stroke: var(--ink);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.polyedge.base {
+  stroke: var(--accent);
+}
+.edge-hit {
+  stroke: transparent;
+  stroke-width: 14;
+  stroke-linecap: round;
+  cursor: pointer;
+}
+.pvertex {
+  fill: var(--ink);
+}
+.plabel {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+/* plane tree */
+.branch.hl {
+  stroke: var(--hl);
+  stroke-width: 3.5;
+}
+.ptree-root {
+  fill: var(--muted);
+}
+.ptree-node {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 2;
+  transition: fill 0.1s;
+}
+.ptree-node.hl {
+  fill: var(--hl);
+}
+
+/* non-crossing chords */
+.chord {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  fill: none;
+  transition: stroke 0.1s;
+}
+.chord.hl {
+  stroke: var(--hl);
+  stroke-width: 4;
+}
+.chord-hit {
+  stroke: transparent;
+  stroke-width: 12;
+  cursor: pointer;
+}
+.cpoint {
+  fill: var(--ink);
+}
+
+/* Young tableau pair */
+.syt-title {
+  fill: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+.syt-box {
+  fill: var(--bg);
+  stroke: var(--line);
+  stroke-width: 1.5;
+  transition: fill 0.1s, stroke 0.1s;
+}
+.syt-cell.hl .syt-box {
+  fill: var(--hl-soft);
+  stroke: var(--hl);
+}
+.syt-num {
+  fill: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* permutation */
+.grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+.permdot {
+  fill: var(--accent);
+  transition: fill 0.1s;
+}
+.permlabel {
+  fill: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  pointer-events: none;
+}
+.permpt.hl .permdot {
+  fill: var(--hl);
+}
