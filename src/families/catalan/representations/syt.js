@@ -8,7 +8,10 @@ import {
   makeAffordButton,
   showAffordButton,
   hideAffordButton,
+  tween,
 } from "../../../core/view.js";
+
+const lerp = (a, b, e) => a + (b - a) * e;
 
 export const meta = {
   id: "syt",
@@ -44,8 +47,10 @@ export function create(container, callbacks) {
   let plus2 = null;
   let minus = null;
   let geom = null;
+  let cancelAnim = null;
 
-  function setPath(path) {
+  function setPath(path, opts = {}) {
+    if (cancelAnim) cancelAnim();
     registry.clear();
     currentEls = [];
     const { openOf, closeOf, pairOfStep, n } = analyze(path);
@@ -67,6 +72,7 @@ export function create(container, callbacks) {
     const N = path.length;
 
     const next = makeSvg(`0 0 ${W} ${H}`);
+    const boxEls = [];
 
     // draw one tableau; ballot -> row assignment; pairFor(value) gives the pair id
     function drawTableau(x0, ballot, labelText, pairFor) {
@@ -94,6 +100,7 @@ export function create(container, callbacks) {
         register(registry, pid, g);
         makeInteractive(g, pid, callbacks, null);
         next.appendChild(g);
+        boxEls.push({ g, tab: labelText, value: v });
       }
     }
 
@@ -130,9 +137,83 @@ export function create(container, callbacks) {
     next.addEventListener("pointermove", showAfford);
     next.addEventListener("pointerleave", hideAfford);
 
+    // Grow / shrink by one box. P is left-anchored so its boxes never move; Q
+    // slides only when row 1's length changes. The new box fades in at the end of
+    // its row (or the removed box fades out), and the frame widens or narrows.
+    function animateResize(edit, prevPath) {
+      const oldPair = pathToPair(prevPath);
+      const oldN = oldPair.n;
+      let grow;
+      let row;
+      if (edit.type === "insert" && n === oldN + 1) {
+        grow = true;
+        row = edit.kind === "valley" ? 2 : 1;
+      } else if (
+        n === oldN - 1 &&
+        oldPair.p.slice(0, -1).join() === p.join() &&
+        oldPair.q.slice(0, -1).join() === q.join()
+      ) {
+        grow = false;
+        row = oldPair.p[oldN - 1]; // row of the removed (largest) box
+      } else {
+        return; // not a clean single-box resize — snap (already rendered)
+      }
+      const oldA1 = oldPair.p.filter((x) => x === 1).length;
+      const oldQX = padX + oldA1 * cs + gap;
+      const shift = qX - oldQX; // Q's horizontal move (new − old)
+      const oldW = oldQX + oldA1 * cs + padX + 34;
+      const maxVal = grow ? n : oldN; // the box that appears / disappears
+
+      const ghosts = [];
+      if (!grow) {
+        const oldA2 = oldN - oldA1;
+        const c = (row === 1 ? oldA1 : oldA2) - 1; // column of the removed box
+        const y = row === 1 ? rowY1 : rowY2;
+        for (const x0 of [padX, oldQX]) {
+          const g = svgEl("g", { class: "syt-cell" });
+          g.appendChild(svgEl("rect", { x: x0 + c * cs, y, width: cs, height: cs, rx: 3, class: "syt-box" }));
+          const t = svgEl("text", {
+            x: x0 + c * cs + cs / 2,
+            y: y + cs / 2,
+            class: "syt-num",
+            "text-anchor": "middle",
+            "dominant-baseline": "central",
+          });
+          t.textContent = String(oldN);
+          g.appendChild(t);
+          next.appendChild(g);
+          ghosts.push(g);
+        }
+      }
+      if (grow) for (const b of boxEls) if (b.value === maxVal) b.g.style.opacity = 0;
+
+      next.style.overflow = "hidden";
+      const frame = (e) => {
+        next.setAttribute("viewBox", `0 0 ${lerp(oldW, W, e)} ${H}`);
+        for (const b of boxEls) {
+          if (b.tab === "Q") b.g.setAttribute("transform", `translate(${-shift * (1 - e)},0)`);
+          if (grow && b.value === maxVal) b.g.style.opacity = String(e);
+        }
+        for (const g of ghosts) g.style.opacity = String(1 - e);
+      };
+      frame(0);
+      cancelAnim = tween(340, frame, () => {
+        next.style.overflow = "";
+        for (const b of boxEls) {
+          if (b.tab === "Q") b.g.removeAttribute("transform");
+          if (grow && b.value === maxVal) b.g.style.opacity = "";
+        }
+        for (const g of ghosts) g.remove();
+        cancelAnim = null;
+      });
+    }
+
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
     svg = next;
+
+    const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
+    if (ed) animateResize(ed, opts.prevPath);
   }
 
   function showAfford() {

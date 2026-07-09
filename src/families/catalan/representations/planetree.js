@@ -53,6 +53,8 @@ function layoutPlaneTree(root) {
   return { width, maxD };
 }
 
+const lerp = (a, b, e) => a + (b - a) * e;
+
 export function create(container, callbacks) {
   let svg = null;
   const registry = makeRegistry();
@@ -66,7 +68,7 @@ export function create(container, callbacks) {
     if (cancelAnim) cancelAnim();
     registry.clear();
     currentEls = [];
-    const { openOf, closeOf, n } = analyze(path);
+    const { pairOfStep, openOf, closeOf, n } = analyze(path);
     rangeOf = Array.from({ length: n }, (_, p) => subtreeRange(openOf, closeOf, p));
     const root = pathToPlaneTree(path);
 
@@ -125,7 +127,8 @@ export function create(container, callbacks) {
         }));
         if (!isRoot && v.children.length === 0) {
           showAffordButton(minus, X(v.x) + 20, Y(v.depth) - 18, callbacks.onEdit, () => ({
-            type: "delete",
+            type: "remove",
+            kind: "peak",
             at: openOf[v.pair],
           }));
         }
@@ -188,6 +191,132 @@ export function create(container, callbacks) {
       return true;
     }
 
+    // Old vertex positions keyed by pair id (root kept separately), plus the
+    // pair-id shift between old and new caused by inserting/removing one pair at
+    // up-step `uStep`: a pair's id is unchanged before the edit point and shifts
+    // by one after it.
+    function oldFrame(prevPath) {
+      const oldRoot = pathToPlaneTree(prevPath);
+      const oldL = layoutPlaneTree(oldRoot);
+      const byPair = new Map();
+      let rootPos = null;
+      (function walk(v) {
+        if (v.pair === null) rootPos = v;
+        else byPair.set(v.pair, v);
+        v.children.forEach(walk);
+      })(oldRoot);
+      return {
+        byPair,
+        rootPos,
+        oldW: Math.max(oldL.width, 1) * unit + pad * 2,
+        oldH: (oldL.maxD + 1) * unit + pad * 2,
+      };
+    }
+    const runResize = (frame) => {
+      next.style.overflow = "hidden";
+      frame(0);
+      cancelAnim = tween(400, frame, () => {
+        next.style.overflow = "";
+        frame.cleanup && frame.cleanup();
+        cancelAnim = null;
+      });
+    };
+    // Move every vertex from (sx,sy) to (ex,ey), then redraw each edge from its
+    // (interpolated) parent and child; pan the viewBox between the two frames.
+    const stepVerts = (e, oldW, oldH) => {
+      next.setAttribute("viewBox", `0 0 ${lerp(oldW, W, e)} ${lerp(oldH, H, e)}`);
+      for (const v of verts) {
+        v.cx = lerp(v.sx, v.ex, e);
+        v.cy = lerp(v.sy, v.ey, e);
+        v.dotEl.setAttribute("cx", v.cx);
+        v.dotEl.setAttribute("cy", v.cy);
+      }
+      for (const v of verts) {
+        if (!v.edgeEl || !v.parent) continue;
+        v.edgeEl.setAttribute("x1", v.parent.cx);
+        v.edgeEl.setAttribute("y1", v.parent.cy);
+        v.edgeEl.setAttribute("x2", v.cx);
+        v.edgeEl.setAttribute("y2", v.cy);
+      }
+    };
+
+    // Insert: a new child buds off its parent. Every other vertex slides from its
+    // old spot; the newcomer starts collapsed on its parent and fades in.
+    function animateGrow(prevPath, edit) {
+      const { byPair, rootPos, oldW, oldH } = oldFrame(prevPath);
+      const uStep = edit.kind === "valley" ? edit.at + 1 : edit.at;
+      const newId = pairOfStep[uStep];
+      const oldOf = (pair) => (pair === null ? rootPos : byPair.get(pair < newId ? pair : pair - 1));
+      const newLeaf = verts.find((v) => v.pair === newId);
+      if (!newLeaf) return false;
+      for (const v of verts) {
+        const o = v === newLeaf ? oldOf(v.parent.pair) : oldOf(v.pair);
+        v.sx = X(o.x);
+        v.sy = Y(o.depth);
+        v.ex = X(v.x);
+        v.ey = Y(v.depth);
+      }
+      newLeaf.dotEl.style.opacity = 0;
+      if (newLeaf.edgeEl) newLeaf.edgeEl.style.opacity = 0;
+      const frame = (e) => {
+        stepVerts(e, oldW, oldH);
+        newLeaf.dotEl.style.opacity = String(e);
+        if (newLeaf.edgeEl) newLeaf.edgeEl.style.opacity = String(e);
+      };
+      frame.cleanup = () => {
+        newLeaf.dotEl.style.opacity = "";
+        if (newLeaf.edgeEl) newLeaf.edgeEl.style.opacity = "";
+      };
+      runResize(frame);
+      return true;
+    }
+
+    // Remove: the pruned leaf folds into its parent as a fading ghost while the
+    // rest of the tree settles.
+    function animateShrink(prevPath, edit) {
+      const { byPair, rootPos, oldW, oldH } = oldFrame(prevPath);
+      const oldA = analyze(prevPath);
+      const uStep = edit.kind === "valley" ? edit.at + 1 : edit.at;
+      const removedId = oldA.pairOfStep[uStep];
+      const removed = byPair.get(removedId);
+      if (!removed) return false;
+      const oldOf = (pair) => (pair === null ? rootPos : byPair.get(pair < removedId ? pair : pair + 1));
+      for (const v of verts) {
+        const o = oldOf(v.pair);
+        v.sx = X(o.x);
+        v.sy = Y(o.depth);
+        v.ex = X(v.x);
+        v.ey = Y(v.depth);
+      }
+      const ppair = removed.parent.pair;
+      const parentNewPair = ppair === null ? null : ppair < removedId ? ppair : ppair - 1;
+      const parentVert = verts.find((v) => v.pair === parentNewPair);
+      const rFrom = { x: X(removed.x), y: Y(removed.depth) };
+      const gDot = svgEl("circle", { r: 6, class: "ptree-node" });
+      const gEdge = svgEl("line", { class: "branch" });
+      next.appendChild(gEdge);
+      next.appendChild(gDot);
+      const frame = (e) => {
+        stepVerts(e, oldW, oldH);
+        const gx = lerp(rFrom.x, parentVert.cx, e);
+        const gy = lerp(rFrom.y, parentVert.cy, e);
+        gDot.setAttribute("cx", gx);
+        gDot.setAttribute("cy", gy);
+        gEdge.setAttribute("x1", parentVert.cx);
+        gEdge.setAttribute("y1", parentVert.cy);
+        gEdge.setAttribute("x2", gx);
+        gEdge.setAttribute("y2", gy);
+        gDot.style.opacity = String(1 - e);
+        gEdge.style.opacity = String(1 - e);
+      };
+      frame.cleanup = () => {
+        gDot.remove();
+        gEdge.remove();
+      };
+      runResize(frame);
+      return true;
+    }
+
     plus = makeAffordButton("grow", "+");
     minus = makeAffordButton("shrink", "−");
     next.appendChild(plus);
@@ -201,8 +330,10 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
-    if (swap) animateSwap(opts.prevPath);
+    const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
+    if (ed && ed.type === "swap") animateSwap(opts.prevPath);
+    else if (ed && ed.type === "insert") animateGrow(opts.prevPath, ed);
+    else if (ed && ed.type === "remove") animateShrink(opts.prevPath, ed);
   }
 
   return {

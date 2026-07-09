@@ -77,21 +77,30 @@ export function create(container, callbacks) {
 
     const unit = 38;
     const pad = 30;
+    // A size-changing edit animates inside a frame big enough for both the old
+    // and new grids; the viewBox pans onto the new one and we settle afterwards.
+    const oldPerm =
+      opts.animate && opts.edit && opts.prevPath && (opts.edit.type === "insert" || opts.edit.type === "remove")
+        ? permutationFromPath(opts.prevPath)
+        : null;
+    const frameN = oldPerm ? Math.max(n, oldPerm.length) : n;
     const W = Math.max(n, 1) * unit + pad * 2;
     const H = Math.max(n, 1) * unit + pad * 2;
+    const gridPx = frameN * unit + pad * 2;
     const X = (i) => pad + i * unit + unit / 2;
-    const Y = (v) => pad + (n - v) * unit + unit / 2;
+    const Y = (v) => pad + (frameN - v) * unit + unit / 2; // value height in the shared frame
+    const cropVB = (m) => `0 ${(frameN - m) * unit} ${m * unit + pad * 2} ${m * unit + pad * 2}`;
     geom = { X, Y, unit, pad, n, W, perm, posOf, openOf, closeOf, downIdx, path };
 
     const next = makeSvg(`0 0 ${W} ${H}`);
 
-    // light grid
-    for (let i = 0; i <= n; i++) {
+    // light grid, sized to the frame
+    for (let i = 0; i <= frameN; i++) {
       next.appendChild(
-        svgEl("line", { x1: pad + i * unit, y1: pad, x2: pad + i * unit, y2: H - pad, class: "grid" })
+        svgEl("line", { x1: pad + i * unit, y1: pad, x2: pad + i * unit, y2: gridPx - pad, class: "grid" })
       );
       next.appendChild(
-        svgEl("line", { x1: pad, y1: pad + i * unit, x2: W - pad, y2: pad + i * unit, class: "grid" })
+        svgEl("line", { x1: pad, y1: pad + i * unit, x2: gridPx - pad, y2: pad + i * unit, class: "grid" })
       );
     }
 
@@ -134,8 +143,96 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
-    if (swap) animateSwap(permutationFromPath(opts.prevPath), perm, geom.Y, groupEls);
+    // Grow / shrink by one value. Inserting or removing a value both relabels
+    // (values past it shift by one) and resizes the grid, so match dots by value:
+    // each survivor slides from where its value used to sit to its new column and
+    // row, the newcomer pops in, and the removed value fades out as a ghost.
+    function animateResize(edit) {
+      const oldN = oldPerm.length;
+      const grow = edit.type === "insert";
+      const posOld = [];
+      oldPerm.forEach((v, i) => (posOld[v] = i));
+      const uStep = edit.kind === "valley" ? edit.at + 1 : edit.at;
+      const src = grow ? path : opts.prevPath;
+      const { matchOf } = analyze(src);
+      let outPos = 0;
+      for (let i = 0; i < matchOf[uStep]; i++) if (src[i] === -1) outPos++;
+      const k = grow ? perm[outPos] : oldPerm[outPos]; // the value that appears / disappears
+      const lerp = (a, b, e) => a + (b - a) * e;
+
+      const specs = [];
+      for (let i = 0; i < perm.length; i++) {
+        if (grow && i === outPos) {
+          specs.push({ g: groupEls[i], enter: true });
+          continue;
+        }
+        const w = perm[i];
+        const ov = grow ? (w < k ? w : w - 1) : w < k ? w : w + 1;
+        const op = posOld[ov];
+        specs.push({ g: groupEls[i], sx: X(op), sy: Y(ov), ex: X(i), ey: Y(w) });
+      }
+
+      let ghost = null;
+      if (!grow) {
+        ghost = svgEl("g", { class: "permpt" });
+        ghost.appendChild(svgEl("circle", { cx: X(outPos), cy: Y(k), r: 11, class: "permdot" }));
+        const lbl = svgEl("text", {
+          x: X(outPos),
+          y: Y(k),
+          class: "permlabel",
+          "text-anchor": "middle",
+          "dominant-baseline": "central",
+        });
+        lbl.textContent = String(k);
+        ghost.appendChild(lbl);
+        next.appendChild(ghost);
+      }
+      for (const s of specs) {
+        if (!s.enter) continue;
+        s.g.style.transformBox = "fill-box";
+        s.g.style.transformOrigin = "center";
+      }
+      if (ghost) {
+        ghost.style.transformBox = "fill-box";
+        ghost.style.transformOrigin = "center";
+      }
+
+      const vb0 = cropVB(oldN).split(" ").map(Number);
+      const vb1 = cropVB(n).split(" ").map(Number);
+      next.style.overflow = "hidden";
+      const frame = (e) => {
+        next.setAttribute("viewBox", vb0.map((o, i) => lerp(o, vb1[i], e)).join(" "));
+        for (const s of specs) {
+          if (s.enter) {
+            s.g.style.opacity = String(e);
+            s.g.style.transform = `scale(${0.4 + 0.6 * e})`;
+          } else {
+            s.g.setAttribute("transform", `translate(${lerp(s.sx, s.ex, e) - s.ex},${lerp(s.sy, s.ey, e) - s.ey})`);
+          }
+        }
+        if (ghost) {
+          ghost.style.opacity = String(1 - e);
+          ghost.style.transform = `scale(${0.4 + 0.6 * (1 - e)})`;
+        }
+      };
+      frame(0);
+      cancelAnim = tween(320, frame, () => {
+        next.style.overflow = "";
+        for (const s of specs) {
+          if (s.enter) {
+            s.g.style.opacity = "";
+            s.g.style.transform = "";
+          } else s.g.removeAttribute("transform");
+        }
+        if (ghost) ghost.remove();
+        cancelAnim = null;
+        if (frameN !== n) setPath(path); // settle onto the natural n-frame
+      });
+    }
+
+    const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
+    if (ed && ed.type === "swap") animateSwap(permutationFromPath(opts.prevPath), perm, geom.Y, groupEls);
+    else if (oldPerm && ed) animateResize(ed);
   }
 
   // A swap exchanges the values sitting in two columns. Each column's x is
@@ -184,7 +281,8 @@ export function create(container, callbacks) {
       const dist = Math.hypot(vbx - X(i), vby - Y(v));
       if (dist < unit * 0.6) {
         showAffordButton(minus, X(i), Y(v) - 18, callbacks.onEdit, () => ({
-          type: "delete",
+          type: "remove",
+          kind: "peak",
           at: openOf[v - 1],
         }));
         return;

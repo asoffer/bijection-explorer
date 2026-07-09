@@ -87,7 +87,8 @@ export function create(container, callbacks) {
       if (isCherry) {
         c.addEventListener("pointerenter", () =>
           showAffordButton(minus, X(node.x) + 20, Y(node.depth) - 18, callbacks.onEdit, () => ({
-            type: "delete",
+            type: "remove",
+            kind: "peak",
             at: openOf[node.pair],
           }))
         );
@@ -139,6 +140,134 @@ export function create(container, callbacks) {
       return true;
     }
 
+    // Place a node element (leaf rect or internal circle) at a pixel point.
+    const putNode = (el, leaf, px, py) => {
+      if (leaf) {
+        el.setAttribute("x", px - 5);
+        el.setAttribute("y", py - 5);
+      } else {
+        el.setAttribute("cx", px);
+        el.setAttribute("cy", py);
+      }
+    };
+    // Slide every node from its start point to its final one, then redraw every
+    // branch from the moved endpoints. `pointOf` returns [start, final] per node.
+    const morphFrame = (t, pointOf) => {
+      for (const nd of nodes) {
+        const [s, f] = pointOf(nd);
+        nd.cx = s[0] + (f[0] - s[0]) * t;
+        nd.cy = s[1] + (f[1] - s[1]) * t;
+        putNode(nd.el, nd.leaf, nd.cx, nd.cy);
+      }
+      for (const e of edges) {
+        e.el.setAttribute("x1", e.from.cx);
+        e.el.setAttribute("y1", e.from.cy);
+        e.el.setAttribute("x2", e.to.cx);
+        e.el.setAttribute("y2", e.to.cy);
+      }
+    };
+    const oldFrame = (prevPath) => {
+      const oldA = analyze(prevPath);
+      const oldLayout = layoutTree(pathToTree(prevPath, oldA.pairOfStep));
+      return { oldA, oldLayout, oldW: Math.max(oldLayout.width, 1) * unit + pad * 2, oldH: Math.max(oldLayout.height, 1) * unit + pad * 2 };
+    };
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    // Insert: a hovered leaf sprouts into an internal node with two leaf
+    // children. In-order index is preserved left of the leaf and shifts by two
+    // to its right, with no depth change — so the left of the tree holds still,
+    // the right slides over by one node-pair, and the new node + its two leaves
+    // unfold out of the old leaf's spot (which dissolves as they grow in).
+    function animateSprout(prevPath, edit) {
+      const { oldLayout, oldW, oldH } = oldFrame(prevPath);
+      const leaf = oldLayout.nodes.find((nd) => nd.leaf && nd.pos === edit.at);
+      if (!leaf) return;
+      const p = leaf.x;
+      const d = leaf.depth;
+      const sprout = (nd) => nd.x >= p && nd.x <= p + 2;
+      const pointOf = (nd) => {
+        const f = [X(nd.x), Y(nd.depth)];
+        if (nd.x < p) return [f, f]; // static
+        if (nd.x <= p + 2) return [[X(p), Y(d)], f]; // unfolds from the old leaf
+        return [[X(nd.x - 2), Y(nd.depth)], f]; // tail slid in from the left
+      };
+
+      const ghost = svgEl("rect", { width: 10, height: 10, class: "leaf" });
+      next.appendChild(ghost);
+      putNode(ghost, true, X(p), Y(d));
+
+      next.style.overflow = "hidden";
+      const frame = (t) => {
+        next.setAttribute("viewBox", `0 0 ${lerp(oldW, W, t)} ${lerp(oldH, H, t)}`);
+        morphFrame(t, pointOf);
+        for (const nd of nodes) if (sprout(nd)) nd.el.style.opacity = String(t);
+        ghost.style.opacity = String(1 - t);
+      };
+      frame(0);
+      cancelAnim = tween(360, frame, () => {
+        next.style.overflow = "";
+        for (const nd of nodes) if (sprout(nd)) nd.el.style.opacity = "";
+        ghost.remove();
+        cancelAnim = null;
+      });
+    }
+
+    // Remove: a cherry (internal node with two leaf children) is pruned back to
+    // a single leaf. The mirror of a sprout: the right of the tree slides back in
+    // by one node-pair while the two child leaves and their branches fold up into
+    // the parent and fade, leaving a leaf that settles into the freed spot.
+    function animatePrune(prevPath, edit) {
+      const { oldA, oldLayout, oldW, oldH } = oldFrame(prevPath);
+      const N = oldLayout.nodes.find((nd) => !nd.leaf && nd.pair === oldA.pairOfStep[edit.at]);
+      if (!N) return;
+      const xN = N.x;
+      const d = N.depth;
+      const p = xN - 1; // the merged leaf's new in-order index
+      const merge = [X(xN), Y(d)]; // where N sat; the cherry folds up here
+      const pointOf = (nd) => {
+        const f = [X(nd.x), Y(nd.depth)];
+        if (nd.x < p) return [f, f]; // static
+        if (nd.x === p) return [[...merge], f]; // merged leaf slides out of N's spot
+        return [[X(nd.x + 2), Y(nd.depth)], f]; // tail slid in from the right
+      };
+      const merged = nodes.find((nd) => nd.x === p);
+
+      const gC = svgEl("circle", { r: 13, class: "treenode" });
+      const gL1 = svgEl("rect", { width: 10, height: 10, class: "leaf" });
+      const gL2 = svgEl("rect", { width: 10, height: 10, class: "leaf" });
+      const gB1 = svgEl("line", { class: "branch" });
+      const gB2 = svgEl("line", { class: "branch" });
+      for (const el of [gB1, gB2, gC, gL1, gL2]) next.appendChild(el);
+      const child = (col, t) => [lerp(X(col), merge[0], t), lerp(Y(d + 1), merge[1], t)];
+
+      next.style.overflow = "hidden";
+      const frame = (t) => {
+        next.setAttribute("viewBox", `0 0 ${lerp(oldW, W, t)} ${lerp(oldH, H, t)}`);
+        morphFrame(t, pointOf);
+        if (merged) merged.el.style.opacity = String(t); // fade the new leaf in
+        const l1 = child(xN - 1, t);
+        const l2 = child(xN + 1, t);
+        putNode(gL1, true, l1[0], l1[1]);
+        putNode(gL2, true, l2[0], l2[1]);
+        putNode(gC, false, merge[0], merge[1]);
+        for (const [b, l] of [[gB1, l1], [gB2, l2]]) {
+          b.setAttribute("x1", merge[0]);
+          b.setAttribute("y1", merge[1]);
+          b.setAttribute("x2", l[0]);
+          b.setAttribute("y2", l[1]);
+        }
+        const op = String(1 - t);
+        for (const el of [gC, gL1, gL2, gB1, gB2]) el.style.opacity = op;
+      };
+      frame(0);
+      cancelAnim = tween(360, frame, () => {
+        next.style.overflow = "";
+        if (merged) merged.el.style.opacity = "";
+        for (const el of [gC, gL1, gL2, gB1, gB2]) el.remove();
+        cancelAnim = null;
+      });
+    }
+
     // affordance buttons, on top, hidden until a leaf / cherry is hovered
     plus = makeAffordButton("grow", "+");
     minus = makeAffordButton("shrink", "−");
@@ -153,8 +282,10 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
-    if (swap) animateSwap(opts.prevPath);
+    const e = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
+    if (e && e.type === "swap") animateSwap(opts.prevPath);
+    else if (e && e.type === "insert") animateSprout(opts.prevPath, e);
+    else if (e && e.type === "remove") animatePrune(opts.prevPath, e);
   }
 
   return {

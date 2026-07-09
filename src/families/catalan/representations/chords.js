@@ -61,8 +61,107 @@ export function create(container, callbacks) {
       chordEls.push([chord, hit]);
     }
 
+    const pointEls = [];
     for (let j = 0; j < P; j++) {
-      next.appendChild(svgEl("circle", { cx: PX(j), cy: PY(j), r: 4, class: "cpoint" }));
+      const c = svgEl("circle", { cx: PX(j), cy: PY(j), r: 4, class: "cpoint" });
+      next.appendChild(c);
+      pointEls.push(c);
+    }
+
+    // Grow / shrink by one chord. Inserting or removing two adjacent points
+    // reshuffles every point's slot around the (fixed-size) circle, so all points
+    // slide to their new angles; the added chord and its two points fade in at the
+    // gap, or the removed short chord collapses to a point and fades out.
+    function animateResize(edit, prevPath) {
+      const grow = edit.type === "insert";
+      const oldP = prevPath.length;
+      const at = edit.at; // the two new / removed points are `at`, `at+1`
+      const ang = (j, PP) => (-90 + (j * 360) / PP) * (Math.PI / 180);
+      const pos = (a) => [cxc + R * Math.cos(a), cyc + R * Math.sin(a)];
+      const slerp = (a0, a1, e) => {
+        let d = a1 - a0;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        return a0 + d * e;
+      };
+      const oldAngleOf = (j) => {
+        if (grow) return j === at || j === at + 1 ? null : ang(j < at ? j : j - 2, oldP);
+        return ang(j < at ? j : j + 2, oldP);
+      };
+      const newPoints = grow ? new Set([at, at + 1]) : new Set();
+      let newChord = -1;
+      if (grow)
+        for (let p = 0; p < n; p++) {
+          const a = openOf[p];
+          const b = closeOf[p];
+          if ((a === at && b === at + 1) || (a === at + 1 && b === at)) {
+            newChord = p;
+            break;
+          }
+        }
+
+      let ghost = null;
+      if (!grow) {
+        const gChord = svgEl("line", { class: "chord" });
+        const gp1 = svgEl("circle", { r: 4, class: "cpoint" });
+        const gp2 = svgEl("circle", { r: 4, class: "cpoint" });
+        next.appendChild(gChord);
+        next.appendChild(gp1);
+        next.appendChild(gp2);
+        const a1 = ang(at, oldP);
+        const a2 = ang(at + 1, oldP);
+        ghost = { gChord, gp1, gp2, a1, a2, mid: (a1 + a2) / 2 };
+      }
+
+      const cpos = new Array(P);
+      const frame = (e) => {
+        for (let j = 0; j < P; j++) {
+          const oa = oldAngleOf(j);
+          const p = oa === null ? pos(ang(j, P)) : pos(slerp(oa, ang(j, P), e));
+          cpos[j] = p;
+          pointEls[j].setAttribute("cx", p[0]);
+          pointEls[j].setAttribute("cy", p[1]);
+          if (newPoints.has(j)) pointEls[j].style.opacity = String(e);
+        }
+        for (let p = 0; p < n; p++) {
+          const a = cpos[openOf[p]];
+          const b = cpos[closeOf[p]];
+          for (const el of chordEls[p]) {
+            el.setAttribute("x1", a[0]);
+            el.setAttribute("y1", a[1]);
+            el.setAttribute("x2", b[0]);
+            el.setAttribute("y2", b[1]);
+          }
+          if (p === newChord) chordEls[p][0].style.opacity = String(e);
+        }
+        if (ghost) {
+          const p1 = pos(slerp(ghost.a1, ghost.mid, e));
+          const p2 = pos(slerp(ghost.a2, ghost.mid, e));
+          ghost.gp1.setAttribute("cx", p1[0]);
+          ghost.gp1.setAttribute("cy", p1[1]);
+          ghost.gp2.setAttribute("cx", p2[0]);
+          ghost.gp2.setAttribute("cy", p2[1]);
+          ghost.gChord.setAttribute("x1", p1[0]);
+          ghost.gChord.setAttribute("y1", p1[1]);
+          ghost.gChord.setAttribute("x2", p2[0]);
+          ghost.gChord.setAttribute("y2", p2[1]);
+          const op = String(1 - e);
+          ghost.gp1.style.opacity = op;
+          ghost.gp2.style.opacity = op;
+          ghost.gChord.style.opacity = op;
+        }
+      };
+      frame(0);
+      cancelAnim = tween(360, frame, () => {
+        for (const j of newPoints) pointEls[j].style.opacity = "";
+        if (newChord >= 0) chordEls[newChord][0].style.opacity = "";
+        if (ghost) {
+          ghost.gChord.remove();
+          ghost.gp1.remove();
+          ghost.gp2.remove();
+        }
+        cancelAnim = null;
+      });
     }
 
     plus = makeAffordButton("grow", "+");
@@ -79,8 +178,9 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
-    if (swap) animateSwap(analyze(opts.prevPath), chordEls);
+    const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
+    if (ed && ed.type === "swap") animateSwap(analyze(opts.prevPath), chordEls);
+    else if (ed && (ed.type === "insert" || ed.type === "remove")) animateResize(ed, opts.prevPath);
   }
 
   // A swap reconnects the chords touching the moved point. Points stay fixed, so
@@ -154,7 +254,7 @@ export function create(container, callbacks) {
       }
     }
     if (best >= 0 && bestD < 22) {
-      showAffordButton(minus, bmx, bmy, callbacks.onEdit, () => ({ type: "delete", at: openOf[best] }));
+      showAffordButton(minus, bmx, bmy, callbacks.onEdit, () => ({ type: "remove", kind: "peak", at: openOf[best] }));
       return;
     }
 

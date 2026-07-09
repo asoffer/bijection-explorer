@@ -110,7 +110,8 @@ export function create(container, callbacks) {
             y: (newVpos[t.a].y + newVpos[t.b].y + newVpos[t.c].y) / 3,
           };
           showAffordButton(minus, c.x, c.y, callbacks.onEdit, () => ({
-            type: "delete",
+            type: "remove",
+            kind: "peak",
             at: openOf[t.pair],
           }));
         });
@@ -210,11 +211,12 @@ export function create(container, callbacks) {
     }
 
     // A vertex at old index j was removed: the ear (j-1, j, j+1) collapses onto
-    // its outer polygon edge as a fading ghost while the rest settles.
+    // its outer polygon edge as a fading ghost while the rest settles. The
+    // removed vertex's own dot and label fold into neighbour j-1 and fade too,
+    // so nothing pops out of existence at the start.
     function animateShrink(j, oldVpos) {
       const from = new Array(M); // new vertices, indexed by new label
       for (let x = 0; x < M; x++) from[x] = x < j ? oldVpos[x] : oldVpos[x + 1];
-      applyPositions(from);
 
       const ghost = svgEl("polygon", { class: "triangle ghost" });
       next.appendChild(ghost);
@@ -222,16 +224,34 @@ export function create(container, callbacks) {
       const gFrom = [oldVpos[j - 1], oldVpos[j], oldVpos[j + 1]];
       const gTo = [newVpos[j - 1], newVpos[j - 1], newVpos[j]];
 
-      cancelAnim = tween(
-        440,
-        (e) => {
-          applyPositions(newVpos.map((nv, x) => lerp(from[x], nv, e)));
-          const g = gFrom.map((p, i) => lerp(p, gTo[i], e));
-          ghost.setAttribute("points", `${g[0].x},${g[0].y} ${g[1].x},${g[1].y} ${g[2].x},${g[2].y}`);
-          ghost.style.opacity = 1 - e;
-        },
-        () => ghost.remove()
-      );
+      const gVert = svgEl("circle", { r: 3.5, class: "pvertex" });
+      const gLabel = svgEl("text", { class: "plabel", "text-anchor": "middle", "dominant-baseline": "central" });
+      gLabel.textContent = String(j);
+      next.appendChild(gVert);
+      next.appendChild(gLabel);
+
+      const frame = (e) => {
+        applyPositions(newVpos.map((nv, x) => lerp(from[x], nv, e)));
+        const g = gFrom.map((p, i) => lerp(p, gTo[i], e));
+        ghost.setAttribute("points", `${g[0].x},${g[0].y} ${g[1].x},${g[1].y} ${g[2].x},${g[2].y}`);
+        ghost.style.opacity = 1 - e;
+        const vp = lerp(oldVpos[j], newVpos[j - 1], e); // fold into neighbour j-1
+        gVert.setAttribute("cx", vp.x);
+        gVert.setAttribute("cy", vp.y);
+        const lp = outward(vp, 16);
+        gLabel.setAttribute("x", lp.x);
+        gLabel.setAttribute("y", lp.y);
+        gVert.style.opacity = 1 - e;
+        gLabel.style.opacity = 1 - e;
+      };
+      // Paint the first frame synchronously; tween's frames start on the next
+      // rAF, so without this the freshly created ghosts flash at (0,0) first.
+      frame(0);
+      cancelAnim = tween(440, frame, () => {
+        ghost.remove();
+        gVert.remove();
+        gLabel.remove();
+      });
     }
 
     // A swap is a diagonal flip: two triangles reshape while the polygon stays
@@ -281,7 +301,7 @@ export function create(container, callbacks) {
           animateGrow(j, prev.vpos);
           animated = true;
         }
-      } else if (edit.type === "delete" && M === prev.M - 1 && opts.prevPath) {
+      } else if (edit.type === "remove" && edit.kind !== "valley" && M === prev.M - 1 && opts.prevPath) {
         const j = earTip(opts.prevPath, edit.at); // old labelling
         if (j >= 0) {
           animateShrink(j, prev.vpos);

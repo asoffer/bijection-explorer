@@ -102,9 +102,17 @@ export function insertValley(path, v) {
   return [...path.slice(0, v), D, U, ...path.slice(v)];
 }
 
-// Delete an empty pair: a peak `UD` occupying steps i, i+1.
-export function deletePeak(path, i) {
+// Remove a peak `UD` occupying steps i, i+1 (the inverse of insertPeak).
+export function removePeak(path, i) {
   if (path[i] !== U || path[i + 1] !== D) return null;
+  return [...path.slice(0, i), ...path.slice(i + 2)];
+}
+
+// Remove a valley `DU` occupying steps i, i+1 (the inverse of insertValley).
+// Always valid where such a pair sits: excising a DU leaves every other prefix
+// height untouched, so the result is still a Dyck path.
+export function removeValley(path, i) {
+  if (path[i] !== D || path[i + 1] !== U) return null;
   return [...path.slice(0, i), ...path.slice(i + 2)];
 }
 

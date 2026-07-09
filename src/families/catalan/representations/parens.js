@@ -68,8 +68,83 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
-    if (swap) animateSwap(opts.edit.at, cx, glyphEls);
+    const e = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
+    if (e && e.type === "swap") animateSwap(e.at, cx, glyphEls);
+    else if (e && (e.type === "insert" || e.type === "remove"))
+      animateResize(next, e, glyphEls, opts.prevPath);
+  }
+
+  // Grow / shrink by one bracket pair. The row is left-anchored, so brackets
+  // before the edit hold still and those after slide over by one pair width;
+  // the new pair fades and pops in at the gap, or the removed pair slides
+  // together and fades. The viewBox widens or narrows in step.
+  function animateResize(root, edit, glyphEls, prevPath) {
+    const { unit, pad, cx, midY } = geom;
+    const H = unit * 2 + pad * 2;
+    const at = edit.at;
+    const grow = edit.type === "insert";
+    const oldLen = prevPath.length;
+    const newLen = grow ? oldLen + 2 : oldLen - 2;
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    // start x (on the old row) for new glyph j
+    const startX = (j) => {
+      if (grow) return j < at ? cx(j) : j <= at + 1 ? cx(j) : cx(j - 2);
+      return j < at ? cx(j) : cx(j + 2);
+    };
+    const inserted = grow ? new Set([at, at + 1]) : new Set();
+    for (const j of inserted) {
+      glyphEls[j].style.transformBox = "fill-box";
+      glyphEls[j].style.transformOrigin = "center";
+    }
+
+    // removed pair: ghosts that slide together and fade
+    const ghosts = [];
+    if (!grow) {
+      const mid = (cx(at) + cx(at + 1)) / 2;
+      for (const k of [at, at + 1]) {
+        const t = svgEl("text", {
+          x: cx(k),
+          y: midY,
+          class: "paren",
+          "text-anchor": "middle",
+          "dominant-baseline": "central",
+        });
+        t.textContent = prevPath[k] === U ? "(" : ")";
+        root.appendChild(t);
+        ghosts.push({ el: t, from: cx(k), to: mid });
+      }
+    }
+
+    const oldW = oldLen * unit + pad * 2;
+    const newW = newLen * unit + pad * 2;
+    root.style.overflow = "hidden";
+    const frame = (t) => {
+      for (let j = 0; j < newLen; j++) {
+        if (inserted.has(j)) {
+          glyphEls[j].setAttribute("x", cx(j));
+          glyphEls[j].style.opacity = String(t);
+          glyphEls[j].style.transform = `scale(${0.3 + 0.7 * t})`;
+        } else {
+          glyphEls[j].setAttribute("x", lerp(startX(j), cx(j), t));
+        }
+      }
+      for (const g of ghosts) {
+        g.el.setAttribute("x", lerp(g.from, g.to, t));
+        g.el.style.opacity = String(1 - t);
+      }
+      root.setAttribute("viewBox", `0 0 ${lerp(oldW, newW, t)} ${H}`);
+    };
+    frame(0);
+    cancelAnim = tween(320, frame, () => {
+      root.style.overflow = "";
+      for (const j of inserted) {
+        glyphEls[j].style.opacity = "";
+        glyphEls[j].style.transform = "";
+      }
+      for (const g of ghosts) g.el.remove();
+      cancelAnim = null;
+    });
   }
 
   // A swap trades the two adjacent brackets: each glyph starts where the other
@@ -165,7 +240,7 @@ export function create(container, callbacks) {
       }
     }
     if (emptyPair >= 0) {
-      placeBtn(afford.btnDelete, x, midY - unit * 0.95, () => ({ type: "delete", at: g - 1 }));
+      placeBtn(afford.btnDelete, x, midY - unit * 0.95, () => ({ type: "remove", kind: "peak", at: g - 1 }));
     } else {
       placeBtn(afford.btnInsert, x, midY - unit * 0.95, () => ({ type: "insert", kind: "peak", at: g }));
     }
