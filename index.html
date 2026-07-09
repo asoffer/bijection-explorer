@@ -3,23 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Bijection Explorer · Catalan objects</title>
+    <title>Bijection Explorer</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header>
       <h1>Bijection Explorer</h1>
-      <p class="tagline">
-        The <a href="https://oeis.org/A000108">Catalan numbers</a> count many
-        families of objects. Here two of them always describe the
-        <em>same</em> underlying structure. Edit either side, or hover a part to
-        see its counterpart light up on the other.
-      </p>
+      <p class="tagline" id="tagline"></p>
 
       <div class="controls">
         <label class="ctl">
+          family
+          <select id="family-select" aria-label="Object family" autocomplete="off"></select>
+        </label>
+        <label class="ctl">
           size <span id="n-label">5</span>
-          <input id="n-input" type="range" min="1" max="12" value="5" />
+          <input id="n-input" type="range" min="1" max="12" value="5" autocomplete="off" />
         </label>
         <button id="randomize" type="button">Randomize</button>
         <button id="reset" type="button">Staircase</button>
@@ -31,7 +30,7 @@
       <section class="panel" id="panel-left">
         <div class="panel-head">
           <span class="side-tag">A</span>
-          <select aria-label="Left representation"></select>
+          <select aria-label="Left representation" autocomplete="off"></select>
         </div>
         <div class="figure-host"></div>
         <p class="blurb"></p>
@@ -40,7 +39,7 @@
       <section class="panel" id="panel-right">
         <div class="panel-head">
           <span class="side-tag">B</span>
-          <select aria-label="Right representation"></select>
+          <select aria-label="Right representation" autocomplete="off"></select>
         </div>
         <div class="figure-host"></div>
         <p class="blurb"></p>

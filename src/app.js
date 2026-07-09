@@ -1,51 +1,61 @@
-import { activeFamily, BY_ID } from "./registry.js";
+import { FAMILIES, byId } from "./registry.js";
 
 // The active family supplies the object model (sampling, sizing, validity) and
-// the list of representations. Everything below is family-agnostic.
-const { model, representations: REPRESENTATIONS, defaults } = activeFamily;
+// the list of representations. Everything below is family-agnostic; switching
+// families rebuilds the panels and controls against the new descriptor.
 
-// ---- shared state ---------------------------------------------------------
+let activeFamily = null;
+let model = null;
+let REPRESENTATIONS = null;
+let repMap = null;
+let path = null;
 
-let path = model.random(defaults.size);
+// ---- DOM handles ----------------------------------------------------------
 
-const panels = {
-  left: makePanel("left", defaults.left),
-  right: makePanel("right", defaults.right),
-};
+const familySelect = document.getElementById("family-select");
+const tagline = document.getElementById("tagline");
+const nInput = document.getElementById("n-input");
+const nLabel = document.getElementById("n-label");
+const resetBtn = document.getElementById("reset");
 
 // ---- a panel = selector + figure + blurb ----------------------------------
 
-function makePanel(side, defaultId) {
+const panels = {
+  left: makePanel("left"),
+  right: makePanel("right"),
+};
+
+function makePanel(side) {
   const root = document.getElementById(`panel-${side}`);
-  const select = root.querySelector("select");
-  const figure = root.querySelector(".figure-host");
-  const blurb = root.querySelector(".blurb");
-
-  for (const rep of REPRESENTATIONS) {
-    const opt = document.createElement("option");
-    opt.value = rep.meta.id;
-    opt.textContent = rep.meta.name;
-    select.appendChild(opt);
-  }
-  select.value = defaultId;
-
   const panel = {
     side,
-    repId: defaultId,
+    repId: null,
     view: null,
-    figure,
-    blurb,
-    select,
+    figure: root.querySelector(".figure-host"),
+    blurb: root.querySelector(".blurb"),
+    select: root.querySelector("select"),
   };
 
-  select.addEventListener("change", () => {
-    panel.repId = select.value;
+  panel.select.addEventListener("change", () => {
+    panel.repId = panel.select.value;
     buildView(panel);
     panel.view.setPath(path);
   });
 
-  buildView(panel);
   return panel;
+}
+
+// Fill a panel's dropdown with the active family's representations.
+function repopulate(panel, defaultId) {
+  panel.select.innerHTML = "";
+  for (const rep of REPRESENTATIONS) {
+    const opt = document.createElement("option");
+    opt.value = rep.meta.id;
+    opt.textContent = rep.meta.name;
+    panel.select.appendChild(opt);
+  }
+  panel.repId = defaultId;
+  panel.select.value = defaultId;
 }
 
 function callbacksFor() {
@@ -61,7 +71,7 @@ function callbacksFor() {
 function buildView(panel) {
   if (panel.view) panel.view.destroy();
   panel.figure.innerHTML = "";
-  const rep = BY_ID[panel.repId];
+  const rep = repMap[panel.repId];
   panel.blurb.textContent = rep.meta.blurb;
   panel.view = rep.create(panel.figure, callbacksFor());
 }
@@ -79,16 +89,47 @@ function highlightAll(pairId) {
   for (const p of Object.values(panels)) p.view.highlight(pairId);
 }
 
-// ---- global controls ------------------------------------------------------
+// ---- family switching -----------------------------------------------------
 
-const nInput = document.getElementById("n-input");
-const nLabel = document.getElementById("n-label");
+function setFamily(family) {
+  activeFamily = family;
+  model = family.model;
+  REPRESENTATIONS = family.representations;
+  repMap = byId(family);
+
+  tagline.innerHTML = family.tagline;
+  resetBtn.textContent = family.resetLabel;
+  nInput.min = model.minSize;
+  nInput.max = model.maxSize;
+
+  repopulate(panels.left, family.defaults.left);
+  repopulate(panels.right, family.defaults.right);
+
+  path = model.random(family.defaults.size);
+  buildView(panels.left);
+  buildView(panels.right);
+  setPath(path);
+}
+
+// ---- global controls ------------------------------------------------------
 
 function syncControls() {
   const n = model.size(path);
   nInput.value = n;
   nLabel.textContent = n;
 }
+
+for (const family of FAMILIES) {
+  const opt = document.createElement("option");
+  opt.value = family.id;
+  opt.textContent = family.name;
+  familySelect.appendChild(opt);
+}
+
+familySelect.addEventListener("change", () => {
+  const family = FAMILIES.find((f) => f.id === familySelect.value);
+  if (family) setFamily(family);
+});
 
 nInput.addEventListener("input", () => {
   const n = Math.max(model.minSize, Math.min(model.maxSize, parseInt(nInput.value, 10) || model.minSize));
@@ -99,7 +140,7 @@ document.getElementById("randomize").addEventListener("click", () => {
   setPath(model.random(model.size(path)));
 });
 
-document.getElementById("reset").addEventListener("click", () => {
+resetBtn.addEventListener("click", () => {
   setPath(model.reset(model.size(path)));
 });
 
@@ -119,4 +160,5 @@ document.getElementById("swap").addEventListener("click", () => {
 
 // ---- go -------------------------------------------------------------------
 
-setPath(path);
+familySelect.value = FAMILIES[0].id;
+setFamily(FAMILIES[0]);

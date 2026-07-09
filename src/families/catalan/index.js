@@ -20,6 +20,12 @@ import * as syt from "./representations/syt.js";
 export const family = {
   id: "catalan",
   name: "Catalan objects",
+  tagline:
+    'The <a href="https://oeis.org/A000108">Catalan numbers</a> count many ' +
+    "families of objects. Here two of them always describe the <em>same</em> " +
+    "underlying structure. Edit either side, or hover a part to see its " +
+    "counterpart light up on the other.",
+  resetLabel: "Staircase",
 
   // Everything the shell needs to drive the shared object, independent of what
   // the object actually is.

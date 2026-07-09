@@ -463,6 +463,90 @@ footer p {
   pointer-events: none;
 }
 
+/* alternating: one-line notation */
+.alt-cmp {
+  fill: var(--muted);
+  font-size: 20px;
+  font-weight: 700;
+  opacity: 0.7;
+}
+.alt-term-box {
+  fill: var(--bg);
+  stroke: var(--line);
+  stroke-width: 1.5;
+  transition: fill 0.1s, stroke 0.1s;
+}
+.alt-term.hl .alt-term-box {
+  fill: var(--hl-soft);
+  stroke: var(--hl);
+}
+.alt-term-num {
+  fill: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+/* alternating: boustrophedon triangle path */
+.boustro-row {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  opacity: 0.6;
+}
+.boustro-arrow {
+  fill: var(--muted);
+  opacity: 0.6;
+}
+.boustro-cell {
+  fill: var(--muted);
+  opacity: 0.35;
+}
+.boustro-path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.75;
+}
+.boustro-cand {
+  fill: var(--panel);
+  stroke: var(--grow);
+  stroke-width: 2;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: opacity 0.1s, fill 0.1s;
+}
+.boustro-cand:hover {
+  opacity: 1;
+  fill: var(--hl-soft);
+  stroke-dasharray: none;
+}
+.boustro-preview {
+  fill: none;
+  stroke: var(--hl);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  stroke-dasharray: 5 4;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.boustro-dot {
+  fill: var(--accent);
+  transition: fill 0.1s;
+}
+.boustro-node.hl .boustro-dot {
+  fill: var(--hl);
+}
+.boustro-num {
+  fill: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
 /* permutation */
 .grid {
   stroke: var(--line);
