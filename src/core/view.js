@@ -3,7 +3,9 @@
 // A view is created with create(container, callbacks) and returns:
 //   { setPath(path), highlight(pairId | null), destroy() }
 //
-// callbacks: { onHover(pairId), onLeave(), onEdit(newPath) }
+// callbacks: { onHover(pairId), onLeave(), onEdit(edit) }
+// where `edit` is a family-defined descriptor (see families/*/edits.js); the
+// shell turns it into the next object via model.applyEdit.
 
 import { svgEl } from "./svg.js";
 
@@ -37,6 +39,24 @@ export function showAffordButton(btn, x, y, onEdit, produce) {
 export function hideAffordButton(btn) {
   btn.style.visibility = "hidden";
   btn.onclick = null;
+}
+
+// Drive a [0,1] progress value across `duration` ms (ease-out cubic), calling
+// onFrame(e) each frame and onDone() once at the end. Returns a cancel fn;
+// call it before starting a new tween so an in-flight one can't fight the new
+// state. Representations use this to animate a known edit instead of snapping.
+export function tween(duration, onFrame, onDone) {
+  const start = performance.now();
+  const ease = (t) => 1 - Math.pow(1 - t, 3);
+  let raf = 0;
+  const tick = (now) => {
+    const e = Math.min(1, (now - start) / duration);
+    onFrame(ease(e));
+    if (e < 1) raf = requestAnimationFrame(tick);
+    else if (onDone) onDone();
+  };
+  raf = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(raf);
 }
 
 export function makeRegistry() {

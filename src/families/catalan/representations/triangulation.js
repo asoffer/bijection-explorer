@@ -1,5 +1,5 @@
-import { analyze, subtreeRange, insertPeak, deletePeak } from "../model.js";
-import { pathToTree, treeToPath, rotateAtPair, leafCount } from "../tree.js";
+import { analyze, subtreeRange } from "../model.js";
+import { pathToTree, leafCount } from "../tree.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
 import {
   makeRegistry,
@@ -9,6 +9,7 @@ import {
   makeAffordButton,
   showAffordButton,
   hideAffordButton,
+  tween,
 } from "../../../core/view.js";
 
 export const meta = {
@@ -36,35 +37,16 @@ function collectTriangles(tree, lo, hi, out) {
   collectTriangles(tree.right, k, hi, out);
 }
 
-const tkey = (a, b, c) => [a, b, c].sort((x, y) => x - y).join(",");
-
-// Find the vertex added/removed between two triangulations that differ by one
-// pair. Relabelling the larger triangulation by the shift "drop index j" must
-// send every triangle not touching j into the smaller one; among such j we take
-// the one leaving the most triangles fixed, so the odd vertex out is the newly
-// added (lowest-degree) one. Most insertions are local (an ear, or a vertex
-// splitting one triangle); a minority genuinely restructure and just morph.
-function findSplit(bigTris, smallSet, Mbig) {
-  let best = -1;
-  let bestKept = -1;
-  for (let j = 1; j <= Mbig - 2; j++) {
-    const g = (x) => (x < j ? x : x - 1);
-    let kept = 0;
-    let ok = true;
-    for (const t of bigTris) {
-      if (t.a === j || t.b === j || t.c === j) continue;
-      if (smallSet.has(tkey(g(t.a), g(t.b), g(t.c)))) kept++;
-      else {
-        ok = false;
-        break;
-      }
-    }
-    if (ok && kept > bestKept) {
-      bestKept = kept;
-      best = j;
-    }
-  }
-  return best;
+// The polygon vertex that appears (on insert) or disappears (on delete) with a
+// single-pair edit is the ear tip — the middle vertex of the triangle whose
+// pair opens at path index `at`. Because the edit hands us `at` directly, this
+// is a lookup, not a diff over two triangulations.
+function earTip(path, at) {
+  const { pairOfStep } = analyze(path);
+  const tris = [];
+  collectTriangles(pathToTree(path, pairOfStep), 0, path.length / 2 + 1, tris);
+  const t = tris.find((tt) => tt.pair === pairOfStep[at]);
+  return t ? t.b : -1;
 }
 
 const lerp = (a, b, e) => ({ x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e });
@@ -75,14 +57,14 @@ export function create(container, callbacks) {
   let currentEls = [];
   let rangeOf = [];
   let prev = null; // { M, vpos, tris } from the previous render
-  let animId = 0;
+  let cancelAnim = null;
   let plus = null;
   let minus = null;
 
   function setPath(path, opts = {}) {
     registry.clear();
     currentEls = [];
-    cancelAnimationFrame(animId);
+    if (cancelAnim) cancelAnim();
 
     const { pairOfStep, openOf, closeOf } = analyze(path);
     const n = path.length / 2;
@@ -118,7 +100,7 @@ export function create(container, callbacks) {
       const poly = svgEl("polygon", { class: "triangle" });
       register(registry, t.pair, poly);
       makeInteractive(poly, t.pair, callbacks, () => {
-        callbacks.onEdit(treeToPath(rotateAtPair(tree, t.pair)));
+        callbacks.onEdit({ type: "rotate", pair: t.pair });
       });
       // an ear (leaf-pair node) can be removed, collapsing along its outer edge
       if (closeOf[t.pair] === openOf[t.pair] + 1) {
@@ -127,11 +109,14 @@ export function create(container, callbacks) {
             x: (newVpos[t.a].x + newVpos[t.b].x + newVpos[t.c].x) / 3,
             y: (newVpos[t.a].y + newVpos[t.b].y + newVpos[t.c].y) / 3,
           };
-          showAffordButton(minus, c.x, c.y, callbacks.onEdit, () => deletePeak(path, openOf[t.pair]));
+          showAffordButton(minus, c.x, c.y, callbacks.onEdit, () => ({
+            type: "delete",
+            at: openOf[t.pair],
+          }));
         });
       }
       next.appendChild(poly);
-      triEls.push({ el: poly, a: t.a, b: t.b, c: t.c });
+      triEls.push({ el: poly, a: t.a, b: t.b, c: t.c, pair: t.pair });
     }
 
     const edgeEls = [];
@@ -147,7 +132,11 @@ export function create(container, callbacks) {
         const mid = { x: (newVpos[v].x + newVpos[w].x) / 2, y: (newVpos[v].y + newVpos[w].y) / 2 };
         const btnAt = outward(mid, 16);
         hit.addEventListener("pointerenter", () =>
-          showAffordButton(plus, btnAt.x, btnAt.y, callbacks.onEdit, () => insertPeak(path, leafPos[v]))
+          showAffordButton(plus, btnAt.x, btnAt.y, callbacks.onEdit, () => ({
+            type: "insert",
+            kind: "peak",
+            at: leafPos[v],
+          }))
         );
         next.appendChild(hit);
         edgeEls.push({ el: hit, v, w });
@@ -203,19 +192,6 @@ export function create(container, callbacks) {
       }
     }
 
-    function runTween(onFrame, onDone) {
-      const dur = 440;
-      const start = performance.now();
-      const ease = (t) => 1 - Math.pow(1 - t, 3);
-      const tick = (now) => {
-        const raw = Math.min(1, (now - start) / dur);
-        onFrame(ease(raw));
-        if (raw < 1) animId = requestAnimationFrame(tick);
-        else if (onDone) onDone();
-      };
-      animId = requestAnimationFrame(tick);
-    }
-
     // A vertex was inserted at index j: shared vertices slide to their new
     // spots and the newcomer buds off its neighbour j-1 rather than the centre.
     function animateGrow(j, oldVpos) {
@@ -226,7 +202,7 @@ export function create(container, callbacks) {
       applyPositions(from);
       vertEls[j].el.style.opacity = 0;
       labelEls[j].el.style.opacity = 0;
-      runTween((e) => {
+      cancelAnim = tween(440, (e) => {
         applyPositions(newVpos.map((nv, x) => lerp(from[x], nv, e)));
         vertEls[j].el.style.opacity = e;
         labelEls[j].el.style.opacity = e;
@@ -246,7 +222,8 @@ export function create(container, callbacks) {
       const gFrom = [oldVpos[j - 1], oldVpos[j], oldVpos[j + 1]];
       const gTo = [newVpos[j - 1], newVpos[j - 1], newVpos[j]];
 
-      runTween(
+      cancelAnim = tween(
+        440,
         (e) => {
           applyPositions(newVpos.map((nv, x) => lerp(from[x], nv, e)));
           const g = gFrom.map((p, i) => lerp(p, gTo[i], e));
@@ -257,22 +234,61 @@ export function create(container, callbacks) {
       );
     }
 
-    const grew = opts.animate && prev && M === prev.M + 1;
-    const shrank = opts.animate && prev && M === prev.M - 1;
-    let animated = false;
-    if (grew) {
-      const oldSet = new Set(prev.tris.map((t) => tkey(t.a, t.b, t.c)));
-      const j = findSplit(triangles, oldSet, M);
-      if (j >= 0) {
-        animateGrow(j, prev.vpos);
-        animated = true;
+    // A swap is a diagonal flip: two triangles reshape while the polygon stays
+    // put. Match triangles by pair id; the ones whose corners changed morph from
+    // their old corner vertices to their new ones (one corner slides across the
+    // quad), which reads as the shared diagonal rotating to the other one.
+    function animateFlip(prevPath) {
+      applyPositions(newVpos); // polygon + unchanged triangles sit at their final spots
+      const oldA = analyze(prevPath);
+      const oldTris = [];
+      collectTriangles(pathToTree(prevPath, oldA.pairOfStep), 0, M - 1, oldTris);
+      const oldByPair = new Map(oldTris.map((t) => [t.pair, t]));
+      const moves = [];
+      for (const te of triEls) {
+        const o = oldByPair.get(te.pair);
+        if (!o || (o.a === te.a && o.b === te.b && o.c === te.c)) continue;
+        moves.push({ el: te.el, a0: o.a, b0: o.b, c0: o.c, a1: te.a, b1: te.b, c1: te.c });
       }
-    } else if (shrank) {
-      const newSet = new Set(triangles.map((t) => tkey(t.a, t.b, t.c)));
-      const j = findSplit(prev.tris, newSet, prev.M);
-      if (j >= 0) {
-        animateShrink(j, prev.vpos);
-        animated = true;
+      if (!moves.length) return false;
+      const setAt = (m, e) => {
+        const pa = lerp(newVpos[m.a0], newVpos[m.a1], e);
+        const pb = lerp(newVpos[m.b0], newVpos[m.b1], e);
+        const pc = lerp(newVpos[m.c0], newVpos[m.c1], e);
+        m.el.setAttribute("points", `${pa.x},${pa.y} ${pb.x},${pb.y} ${pc.x},${pc.y}`);
+      };
+      moves.forEach((m) => setAt(m, 0));
+      cancelAnim = tween(
+        380,
+        (e) => moves.forEach((m) => setAt(m, e)),
+        () => {
+          moves.forEach((m) => setAt(m, 1));
+          cancelAnim = null;
+        }
+      );
+      return true;
+    }
+
+    // Knowing the exact edit, the changed vertex is a lookup (earTip). A peak
+    // insert grows and a delete shrinks by one vertex; valley inserts and
+    // "set" reshapes have no clean single-vertex mapping, so they just snap.
+    const edit = opts.edit;
+    let animated = false;
+    if (opts.animate && edit && prev) {
+      if (edit.type === "insert" && edit.kind !== "valley" && M === prev.M + 1) {
+        const j = earTip(path, edit.at); // new labelling: the pair opens at `at`
+        if (j >= 0) {
+          animateGrow(j, prev.vpos);
+          animated = true;
+        }
+      } else if (edit.type === "delete" && M === prev.M - 1 && opts.prevPath) {
+        const j = earTip(opts.prevPath, edit.at); // old labelling
+        if (j >= 0) {
+          animateShrink(j, prev.vpos);
+          animated = true;
+        }
+      } else if (edit.type === "swap" && opts.prevPath && M === prev.M) {
+        animated = animateFlip(opts.prevPath);
       }
     }
     if (!animated) applyPositions(newVpos);
@@ -280,7 +296,7 @@ export function create(container, callbacks) {
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
     svg = next;
-    prev = { M, vpos: newVpos, tris: triangles.map((t) => ({ a: t.a, b: t.b, c: t.c })) };
+    prev = { M, vpos: newVpos };
   }
 
   return {

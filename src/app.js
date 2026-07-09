@@ -62,8 +62,13 @@ function callbacksFor() {
   return {
     onHover: (pairId) => highlightAll(pairId),
     onLeave: () => highlightAll(null),
-    onEdit: (newPath) => {
-      if (newPath && newPath.length >= 2 && model.isValid(newPath)) setPath(newPath, true);
+    // An affordance reports WHAT it did (an edit descriptor), not a finished
+    // object. The model turns it into the next object; we validate, then
+    // broadcast the descriptor so views can animate that specific transition.
+    onEdit: (edit) => {
+      if (!edit) return;
+      const next = model.applyEdit(path, edit);
+      if (next && model.size(next) >= model.minSize && model.isValid(next)) setPath(next, true, edit);
     },
   };
 }
@@ -78,10 +83,10 @@ function buildView(panel) {
 
 // ---- propagation ----------------------------------------------------------
 
-function setPath(newPath, animate = false) {
+function setPath(newPath, animate = false, edit = null) {
   const prevPath = path;
   path = newPath;
-  for (const p of Object.values(panels)) p.view.setPath(path, { animate, prevPath });
+  for (const p of Object.values(panels)) p.view.setPath(path, { animate, prevPath, edit });
   syncControls();
 }
 

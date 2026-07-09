@@ -40,6 +40,14 @@ export function size(perm) {
   return perm.length;
 }
 
+// Inbound edits arrive as { type: "set", perm }. This family has no structural
+// edit vocabulary of its own — a reroute just carries the resulting permutation
+// — so applyEdit simply unwraps it. (Same contract as the Catalan family's
+// applyEdit; see ../catalan/edits.js.)
+export function applyEdit(perm, edit) {
+  return edit && edit.type === "set" ? edit.perm : null;
+}
+
 // ---- construction ---------------------------------------------------------
 
 // The canonical "zigzag" permutation: pull alternately from the top and bottom

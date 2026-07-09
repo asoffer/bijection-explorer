@@ -1,14 +1,7 @@
-import {
-  U,
-  D,
-  analyze,
-  elementaryMove,
-  insertPeak,
-  insertValley,
-  deletePeak,
-} from "../model.js";
+import { U, D, analyze } from "../model.js";
+import { applyEdit } from "../edits.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import { makeInteractive } from "../../../core/view.js";
+import { makeInteractive, tween } from "../../../core/view.js";
 
 export const meta = {
   id: "dyck",
@@ -22,18 +15,23 @@ export function create(container, callbacks) {
   let region = null;
   let geom = null;
   let afford = null; // { ring, btnPeak, btnValley, btnDelete, reshape }
+  let cancelAnim = null;
 
-  function setPath(path) {
+  function setPath(path, opts = {}) {
+    if (cancelAnim) cancelAnim();
     const { pairOfStep, openOf, closeOf } = analyze(path);
 
+    // A swap (elementary move) keeps n fixed and moves exactly one vertex: the
+    // apex between steps `at` and `at+1` slides between peak and valley height
+    // while its two edges swap up/down (and colour). Everything else is
+    // unchanged, so we animate that lone vertex and leave the rest in place.
+    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
+    const oldPts = swap ? prefixHeights(opts.prevPath) : null;
+
     // Prefix heights: pts[j] = height after j steps.
-    const pts = [0];
-    let maxH = 0;
-    for (let j = 0; j < path.length; j++) {
-      pts.push(pts[j] + path[j]);
-      maxH = Math.max(maxH, pts[j + 1]);
-    }
-    maxH = Math.max(maxH, 1);
+    const pts = prefixHeights(path);
+    // Animate inside a frame tall enough for both shapes so nothing overflows.
+    const maxH = Math.max(1, ...pts, ...(swap ? oldPts : []));
 
     const unit = 40;
     const padX = 24;
@@ -56,6 +54,7 @@ export function create(container, callbacks) {
     next.appendChild(region);
 
     // per-step segments (hoverable / highlightable)
+    const stepEls = [];
     for (let j = 0; j < path.length; j++) {
       const seg = svgEl("line", {
         x1: X(j),
@@ -66,11 +65,15 @@ export function create(container, callbacks) {
       });
       makeInteractive(seg, pairOfStep[j], callbacks, null);
       next.appendChild(seg);
+      stepEls.push(seg);
     }
 
     // node dots at each lattice point
+    const dotEls = [];
     for (let j = 0; j <= path.length; j++) {
-      next.appendChild(svgEl("circle", { cx: X(j), cy: Y(pts[j]), r: 2.5, class: "vertex" }));
+      const dot = svgEl("circle", { cx: X(j), cy: Y(pts[j]), r: 2.5, class: "vertex" });
+      next.appendChild(dot);
+      dotEls.push(dot);
     }
 
     // affordance layer, on top, hidden until the pointer moves over the figure
@@ -81,6 +84,66 @@ export function create(container, callbacks) {
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
     svg = next;
+
+    if (swap) animateSwap(opts.edit.at, oldPts, pts, Y, stepEls, dotEls, { W, unit, head, maxH });
+  }
+
+  function prefixHeights(p) {
+    const pts = [0];
+    for (let j = 0; j < p.length; j++) pts.push(pts[j] + p[j]);
+    return pts;
+  }
+
+  // Slide the apex between steps `at`/`at+1` from its old height to its new one
+  // and crossfade the two edges from their pre-swap colours to their new ones.
+  function animateSwap(at, oldPts, pts, Y, stepEls, dotEls, vb) {
+    const m = at + 1;
+    const yOld = Y(oldPts[m]);
+    const yNew = Y(pts[m]);
+    const left = stepEls[at]; // edge ending at the apex
+    const right = stepEls[at + 1]; // edge starting at the apex
+    const dot = dotEls[m];
+
+    // The path is drawn in a frame tall enough for both shapes (vb.maxH). If the
+    // swap raises or lowers the peak's global max, the old and new compact frames
+    // differ, so pan/zoom the viewBox from the old compact box to the new one —
+    // frame 0 then matches the image that was on screen (no jump).
+    const oldMaxH = Math.max(1, ...oldPts);
+    const newMaxH = Math.max(1, ...pts);
+    const y0Old = (vb.maxH - oldMaxH) * vb.unit;
+    const y0New = (vb.maxH - newMaxH) * vb.unit;
+    const hOld = oldMaxH * vb.unit + vb.head * 2;
+    const hNew = newMaxH * vb.unit + vb.head * 2;
+    const setVB = (e) =>
+      svg.setAttribute("viewBox", `0 ${y0Old + (y0New - y0Old) * e} ${vb.W} ${hOld + (hNew - hOld) * e}`);
+
+    // A swap flips each edge's direction, so its old colour is the opposite of
+    // the one it now carries. Paint that, commit, then release to animate.
+    for (const seg of [left, right]) {
+      seg.style.stroke = seg.classList.contains("up") ? "var(--down)" : "var(--up)";
+    }
+    void left.getBoundingClientRect();
+    for (const seg of [left, right]) {
+      seg.style.transition = "stroke 360ms linear";
+      seg.style.stroke = "";
+    }
+
+    setVB(0);
+    cancelAnim = tween(
+      360,
+      (e) => {
+        const y = yOld + (yNew - yOld) * e;
+        left.setAttribute("y2", y);
+        right.setAttribute("y1", y);
+        dot.setAttribute("cy", y);
+        setVB(e);
+      },
+      () => {
+        left.style.transition = "";
+        right.style.transition = "";
+        cancelAnim = null;
+      }
+    );
   }
 
   function buildAffordances(parent) {
@@ -150,33 +213,28 @@ export function create(container, callbacks) {
     const valleyPt = v >= 1 && v <= path.length - 1 && path[v - 1] === D && path[v] === U;
 
     if (peakApex) {
-      placeBtn(afford.btnDelete, X(v), Y(h) - 22, () => deletePeak(path, v - 1));
-      const swap = elementaryMove(path, v - 1);
-      if (swap) {
-        afford.reshape.setAttribute("cx", X(v) + 16);
-        afford.reshape.setAttribute("cy", Y(h) + 2);
-        afford.reshape.style.visibility = "visible";
-        afford.reshape.onclick = (ev) => {
-          ev.stopPropagation();
-          callbacks.onEdit(swap);
-        };
-      }
+      placeBtn(afford.btnDelete, X(v), Y(h) - 22, () => ({ type: "delete", at: v - 1 }));
+      showReshape(v - 1, X(v) + 16, Y(h) + 2);
     } else {
-      placeBtn(afford.btnPeak, X(v), Y(h + 1) - 22, () => insertPeak(path, v));
-      if (h >= 1) placeBtn(afford.btnValley, X(v), Y(h - 1) + 22, () => insertValley(path, v));
-      if (valleyPt) {
-        const swap = elementaryMove(path, v - 1);
-        if (swap) {
-          afford.reshape.setAttribute("cx", X(v) + 16);
-          afford.reshape.setAttribute("cy", Y(h) - 2);
-          afford.reshape.style.visibility = "visible";
-          afford.reshape.onclick = (ev) => {
-            ev.stopPropagation();
-            callbacks.onEdit(swap);
-          };
-        }
+      placeBtn(afford.btnPeak, X(v), Y(h + 1) - 22, () => ({ type: "insert", kind: "peak", at: v }));
+      if (h >= 1) {
+        placeBtn(afford.btnValley, X(v), Y(h - 1) + 22, () => ({ type: "insert", kind: "valley", at: v }));
       }
+      if (valleyPt) showReshape(v - 1, X(v) + 16, Y(h) - 2);
     }
+  }
+
+  // Offer the elementary (peak<->valley) swap at step `at` when it stays valid.
+  function showReshape(at, cx, cy) {
+    const swap = { type: "swap", at };
+    if (!applyEdit(geom.path, swap)) return;
+    afford.reshape.setAttribute("cx", cx);
+    afford.reshape.setAttribute("cy", cy);
+    afford.reshape.style.visibility = "visible";
+    afford.reshape.onclick = (ev) => {
+      ev.stopPropagation();
+      callbacks.onEdit(swap);
+    };
   }
 
   function showRegion(pairId) {

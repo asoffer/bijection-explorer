@@ -1,4 +1,4 @@
-import { analyze, subtreeRange, insertPeak, deletePeak } from "../model.js";
+import { analyze, subtreeRange } from "../model.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
 import {
   makeRegistry,
@@ -8,6 +8,7 @@ import {
   makeAffordButton,
   showAffordButton,
   hideAffordButton,
+  tween,
 } from "../../../core/view.js";
 
 export const meta = {
@@ -25,8 +26,10 @@ export function create(container, callbacks) {
   let plus = null;
   let minus = null;
   let geom = null;
+  let cancelAnim = null;
 
-  function setPath(path) {
+  function setPath(path, opts = {}) {
+    if (cancelAnim) cancelAnim();
     registry.clear();
     currentEls = [];
     const { openOf, closeOf, n } = analyze(path);
@@ -45,6 +48,7 @@ export function create(container, callbacks) {
 
     const next = makeSvg(`0 0 ${W} ${W}`);
 
+    const chordEls = [];
     for (let p = 0; p < n; p++) {
       const a = openOf[p];
       const b = closeOf[p];
@@ -54,6 +58,7 @@ export function create(container, callbacks) {
       const hit = svgEl("line", { x1: PX(a), y1: PY(a), x2: PX(b), y2: PY(b), class: "chord-hit" });
       makeInteractive(hit, p, callbacks, null);
       next.appendChild(hit);
+      chordEls.push([chord, hit]);
     }
 
     for (let j = 0; j < P; j++) {
@@ -73,6 +78,53 @@ export function create(container, callbacks) {
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
     svg = next;
+
+    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
+    if (swap) animateSwap(analyze(opts.prevPath), chordEls);
+  }
+
+  // A swap reconnects the chords touching the moved point. Points stay fixed, so
+  // each changed chord's endpoints slide along the circle (shortest way) from
+  // the points they used to join to the points they now join.
+  function animateSwap(old, chordEls) {
+    const { P, PX, PY, openOf, closeOf, n } = geom;
+    const short = (from, to) => {
+      let d = to - from;
+      if (d > P / 2) d -= P;
+      if (d < -P / 2) d += P;
+      return d;
+    };
+    const moves = [];
+    for (let p = 0; p < n; p++) {
+      if (old.openOf[p] === openOf[p] && old.closeOf[p] === closeOf[p]) continue;
+      moves.push({
+        els: chordEls[p],
+        a0: old.openOf[p],
+        b0: old.closeOf[p],
+        da: short(old.openOf[p], openOf[p]),
+        db: short(old.closeOf[p], closeOf[p]),
+      });
+    }
+    if (!moves.length) return;
+    const setAt = (m, e) => {
+      const ai = m.a0 + m.da * e;
+      const bi = m.b0 + m.db * e;
+      for (const el of m.els) {
+        el.setAttribute("x1", PX(ai));
+        el.setAttribute("y1", PY(ai));
+        el.setAttribute("x2", PX(bi));
+        el.setAttribute("y2", PY(bi));
+      }
+    };
+    moves.forEach((m) => setAt(m, 0));
+    cancelAnim = tween(
+      380,
+      (e) => moves.forEach((m) => setAt(m, e)),
+      () => {
+        moves.forEach((m) => setAt(m, 1));
+        cancelAnim = null;
+      }
+    );
   }
 
   function onMove(e) {
@@ -102,7 +154,7 @@ export function create(container, callbacks) {
       }
     }
     if (best >= 0 && bestD < 22) {
-      showAffordButton(minus, bmx, bmy, callbacks.onEdit, () => deletePeak(path, openOf[best]));
+      showAffordButton(minus, bmx, bmy, callbacks.onEdit, () => ({ type: "delete", at: openOf[best] }));
       return;
     }
 
@@ -115,7 +167,7 @@ export function create(container, callbacks) {
     const gapAngle = (-90 + ((s + 0.5) * 360) / P) * (Math.PI / 180);
     const gx = cxc + (R + 16) * Math.cos(gapAngle);
     const gy = cyc + (R + 16) * Math.sin(gapAngle);
-    showAffordButton(plus, gx, gy, callbacks.onEdit, () => insertPeak(path, g));
+    showAffordButton(plus, gx, gy, callbacks.onEdit, () => ({ type: "insert", kind: "peak", at: g }));
   }
 
   return {

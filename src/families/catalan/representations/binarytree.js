@@ -1,5 +1,5 @@
-import { analyze, subtreeRange, insertPeak, deletePeak } from "../model.js";
-import { pathToTree, treeToPath, rotateAtPair, layoutTree } from "../tree.js";
+import { analyze, subtreeRange } from "../model.js";
+import { pathToTree, layoutTree } from "../tree.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
 import {
   makeRegistry,
@@ -9,6 +9,7 @@ import {
   makeAffordButton,
   showAffordButton,
   hideAffordButton,
+  tween,
 } from "../../../core/view.js";
 
 export const meta = {
@@ -25,8 +26,10 @@ export function create(container, callbacks) {
   let rangeOf = [];
   let plus = null;
   let minus = null;
+  let cancelAnim = null;
 
-  function setPath(path) {
+  function setPath(path, opts = {}) {
+    if (cancelAnim) cancelAnim();
     registry.clear();
     currentEls = [];
     const { pairOfStep, openOf, closeOf, n } = analyze(path);
@@ -44,15 +47,14 @@ export function create(container, callbacks) {
     const next = makeSvg(`0 0 ${W} ${H}`);
 
     for (const e of edges) {
-      next.appendChild(
-        svgEl("line", {
-          x1: X(e.from.x),
-          y1: Y(e.from.depth),
-          x2: X(e.to.x),
-          y2: Y(e.to.depth),
-          class: "branch",
-        })
-      );
+      e.el = svgEl("line", {
+        x1: X(e.from.x),
+        y1: Y(e.from.depth),
+        x2: X(e.to.x),
+        y2: Y(e.to.depth),
+        class: "branch",
+      });
+      next.appendChild(e.el);
     }
 
     for (const node of nodes) {
@@ -65,28 +67,76 @@ export function create(container, callbacks) {
           class: "leaf interactive",
         });
         rect.addEventListener("pointerenter", () =>
-          showAffordButton(plus, X(node.x), Y(node.depth) + 20, callbacks.onEdit, () =>
-            insertPeak(path, node.pos)
-          )
+          showAffordButton(plus, X(node.x), Y(node.depth) + 20, callbacks.onEdit, () => ({
+            type: "insert",
+            kind: "peak",
+            at: node.pos,
+          }))
         );
         next.appendChild(rect);
+        node.el = rect;
         continue;
       }
       const c = svgEl("circle", { cx: X(node.x), cy: Y(node.depth), r: 13, class: "treenode" });
       register(registry, node.pair, c);
       makeInteractive(c, node.pair, callbacks, () => {
-        callbacks.onEdit(treeToPath(rotateAtPair(tree, node.pair)));
+        callbacks.onEdit({ type: "rotate", pair: node.pair });
       });
       // a leaf-pair (cherry) node can be pruned back to a single leaf
       const isCherry = closeOf[node.pair] === openOf[node.pair] + 1;
       if (isCherry) {
         c.addEventListener("pointerenter", () =>
-          showAffordButton(minus, X(node.x) + 20, Y(node.depth) - 18, callbacks.onEdit, () =>
-            deletePeak(path, openOf[node.pair])
-          )
+          showAffordButton(minus, X(node.x) + 20, Y(node.depth) - 18, callbacks.onEdit, () => ({
+            type: "delete",
+            at: openOf[node.pair],
+          }))
         );
       }
       next.appendChild(c);
+      node.el = c;
+    }
+
+    // A swap is a rotation. In-order position (x) is preserved by a rotation, so
+    // every node keeps its column and only its depth changes: match old and new
+    // nodes by x, slide each to its new depth, and redraw the branches (whose
+    // parent/child links changed) each frame from the moving endpoints.
+    function animateSwap(prevPath) {
+      const oldA = analyze(prevPath);
+      const oldLayout = layoutTree(pathToTree(prevPath, oldA.pairOfStep));
+      const oldDepthByX = new Map(oldLayout.nodes.map((nd) => [nd.x, nd.depth]));
+      // Tree height changes with a rotation, so the viewBox differs old vs new;
+      // tween it so frame 0 matches the image that was on screen.
+      const oldW = Math.max(oldLayout.width, 1) * unit + pad * 2;
+      const oldH = Math.max(oldLayout.height, 1) * unit + pad * 2;
+      let moved = false;
+      for (const nd of nodes) {
+        nd.d0 = oldDepthByX.has(nd.x) ? oldDepthByX.get(nd.x) : nd.depth;
+        nd.d1 = nd.depth;
+        if (nd.d0 !== nd.d1) moved = true;
+      }
+      if (!moved) return false;
+
+      const place = (nd, d) => {
+        if (nd.leaf) nd.el.setAttribute("y", Y(d) - 5);
+        else nd.el.setAttribute("cy", Y(d));
+      };
+      const frame = (t) => {
+        next.setAttribute("viewBox", `0 0 ${oldW + (W - oldW) * t} ${oldH + (H - oldH) * t}`);
+        for (const nd of nodes) {
+          nd.cd = nd.d0 + (nd.d1 - nd.d0) * t;
+          place(nd, nd.cd);
+        }
+        for (const e of edges) {
+          e.el.setAttribute("y1", Y(e.from.cd));
+          e.el.setAttribute("y2", Y(e.to.cd));
+        }
+      };
+      frame(0);
+      cancelAnim = tween(400, frame, () => {
+        frame(1);
+        cancelAnim = null;
+      });
+      return true;
     }
 
     // affordance buttons, on top, hidden until a leaf / cherry is hovered
@@ -102,6 +152,9 @@ export function create(container, callbacks) {
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
     svg = next;
+
+    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
+    if (swap) animateSwap(opts.prevPath);
   }
 
   return {

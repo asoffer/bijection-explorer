@@ -1,4 +1,4 @@
-import { U, analyze, subtreeRange, insertPeak, deletePeak } from "../model.js";
+import { U, analyze, subtreeRange } from "../model.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
 import {
   makeRegistry,
@@ -8,6 +8,7 @@ import {
   makeAffordButton,
   showAffordButton,
   hideAffordButton,
+  tween,
 } from "../../../core/view.js";
 
 export const meta = {
@@ -58,8 +59,10 @@ export function create(container, callbacks) {
   let plus = null;
   let minus = null;
   let reshape = null;
+  let cancelAnim = null;
 
-  function setPath(path) {
+  function setPath(path, opts = {}) {
+    if (cancelAnim) cancelAnim();
     registry.clear();
     currentEls = [];
     const perm = permutationFromPath(path);
@@ -97,6 +100,7 @@ export function create(container, callbacks) {
     next.appendChild(box);
 
     // permutation points (i, value)
+    const groupEls = [];
     for (let i = 0; i < n; i++) {
       const v = perm[i];
       const g = svgEl("g", { class: "permpt" });
@@ -114,6 +118,7 @@ export function create(container, callbacks) {
       register(registry, v - 1, g);
       makeInteractive(g, v - 1, callbacks, null);
       next.appendChild(g);
+      groupEls.push(g);
     }
 
     plus = makeAffordButton("grow", "+");
@@ -128,6 +133,31 @@ export function create(container, callbacks) {
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
     svg = next;
+
+    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
+    if (swap) animateSwap(permutationFromPath(opts.prevPath), perm, geom.Y, groupEls);
+  }
+
+  // A swap exchanges the values sitting in two columns. Each column's x is
+  // fixed, so slide the two affected dots vertically from their old value-height
+  // to their new one — they trade places up/down.
+  function animateSwap(oldPerm, perm, Y, groupEls) {
+    const moves = [];
+    for (let i = 0; i < perm.length; i++) {
+      if (oldPerm[i] !== perm[i]) moves.push({ g: groupEls[i], dy: Y(oldPerm[i]) - Y(perm[i]) });
+    }
+    if (!moves.length) return;
+    for (const m of moves) m.g.setAttribute("transform", `translate(0,${m.dy})`);
+    cancelAnim = tween(
+      360,
+      (e) => {
+        for (const m of moves) m.g.setAttribute("transform", `translate(0,${m.dy * (1 - e)})`);
+      },
+      () => {
+        for (const m of moves) m.g.removeAttribute("transform");
+        cancelAnim = null;
+      }
+    );
   }
 
   function hideAfford() {
@@ -153,16 +183,19 @@ export function create(container, callbacks) {
     if (v !== undefined && closeOf[v - 1] === openOf[v - 1] + 1) {
       const dist = Math.hypot(vbx - X(i), vby - Y(v));
       if (dist < unit * 0.6) {
-        showAffordButton(minus, X(i), Y(v) - 18, callbacks.onEdit, () =>
-          deletePeak(path, openOf[v - 1])
-        );
+        showAffordButton(minus, X(i), Y(v) - 18, callbacks.onEdit, () => ({
+          type: "delete",
+          at: openOf[v - 1],
+        }));
         return;
       }
     }
     const g = Math.max(0, Math.min(n, Math.round((vbx - pad) / unit)));
-    showAffordButton(plus, pad + g * unit, pad - 13, callbacks.onEdit, () =>
-      insertPeak(path, g < n ? downIdx[g] : path.length)
-    );
+    showAffordButton(plus, pad + g * unit, pad - 13, callbacks.onEdit, () => ({
+      type: "insert",
+      kind: "peak",
+      at: g < n ? downIdx[g] : path.length,
+    }));
 
     if (g >= 1 && g <= n - 1) {
       const swapped = perm.slice();
@@ -174,7 +207,7 @@ export function create(container, callbacks) {
         reshape.style.visibility = "visible";
         reshape.onclick = (ev) => {
           ev.stopPropagation();
-          callbacks.onEdit(moved);
+          callbacks.onEdit({ type: "set", path: moved });
         };
       }
     }

@@ -202,7 +202,7 @@ export function create(container, callbacks) {
       ring.addEventListener("pointerleave", () => (preview.style.visibility = "hidden"));
       ring.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        callbacks.onEdit(colsToPerm(rerouted));
+        callbacks.onEdit({ type: "set", perm: colsToPerm(rerouted) });
       });
       cands.appendChild(ring);
     }

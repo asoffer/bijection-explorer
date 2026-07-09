@@ -7,6 +7,7 @@
 // ../../registry.js. Nothing in the app shell is Catalan-specific.
 
 import { randomPath, staircasePath, isValidPath, semilength } from "./model.js";
+import { applyEdit } from "./edits.js";
 
 import * as dyck from "./representations/dyckpath.js";
 import * as parens from "./representations/parens.js";
@@ -34,6 +35,7 @@ export const family = {
     reset: staircasePath, // reset(n)  -> the canonical/"identity" object of size n
     size: semilength, // size(obj) -> n
     isValid: isValidPath, // isValid(obj) -> bool, guards inbound edits
+    applyEdit, // applyEdit(obj, edit) -> next obj | null
     minSize: 1,
     maxSize: 12,
   },

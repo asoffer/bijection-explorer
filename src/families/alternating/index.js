@@ -2,7 +2,7 @@
 // a down-up alternating permutation of [n]. Same descriptor shape as the
 // Catalan family — see ../catalan/index.js.
 
-import { random, zigzag, size, isValid } from "./model.js";
+import { random, zigzag, size, isValid, applyEdit } from "./model.js";
 
 import * as list from "./representations/list.js";
 import * as matrix from "./representations/matrix.js";
@@ -23,6 +23,7 @@ export const family = {
     reset: zigzag, // reset(n)  -> the canonical zigzag permutation
     size, // size(perm) -> n
     isValid, // guards inbound edits
+    applyEdit, // applyEdit(perm, edit) -> next perm | null
     minSize: 1,
     maxSize: 10,
   },

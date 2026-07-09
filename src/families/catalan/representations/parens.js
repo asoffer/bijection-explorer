@@ -1,13 +1,7 @@
-import {
-  U,
-  analyze,
-  subtreeRange,
-  elementaryMove,
-  insertPeak,
-  deletePeak,
-} from "../model.js";
+import { U, analyze, subtreeRange } from "../model.js";
+import { applyEdit } from "../edits.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import { makeRegistry, register, applyHighlight, makeInteractive } from "../../../core/view.js";
+import { makeRegistry, register, applyHighlight, makeInteractive, tween } from "../../../core/view.js";
 
 export const meta = {
   id: "parens",
@@ -24,8 +18,10 @@ export function create(container, callbacks) {
   let band = null;
   let geom = null;
   let afford = null;
+  let cancelAnim = null;
 
-  function setPath(path) {
+  function setPath(path, opts = {}) {
+    if (cancelAnim) cancelAnim();
     registry.clear();
     currentEls = [];
     const { pairOfStep, openOf, closeOf, n } = analyze(path);
@@ -47,6 +43,7 @@ export function create(container, callbacks) {
     next.appendChild(band);
 
     // brackets
+    const glyphEls = [];
     for (let j = 0; j < path.length; j++) {
       const ch = path[j] === U ? "(" : ")";
       const t = svgEl("text", {
@@ -60,6 +57,7 @@ export function create(container, callbacks) {
       register(registry, pairOfStep[j], t);
       makeInteractive(t, pairOfStep[j], callbacks, null);
       next.appendChild(t);
+      glyphEls.push(t);
     }
 
     afford = buildAffordances(next);
@@ -69,6 +67,29 @@ export function create(container, callbacks) {
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
     svg = next;
+
+    const swap = opts.animate && opts.edit && opts.edit.type === "swap" && opts.prevPath;
+    if (swap) animateSwap(opts.edit.at, cx, glyphEls);
+  }
+
+  // A swap trades the two adjacent brackets: each glyph starts where the other
+  // one was and slides home, so the `(` and `)` visibly cross past each other.
+  function animateSwap(at, cx, glyphEls) {
+    const a = glyphEls[at];
+    const b = glyphEls[at + 1];
+    if (!a || !b) return;
+    const xa = cx(at);
+    const xb = cx(at + 1);
+    cancelAnim = tween(
+      340,
+      (e) => {
+        a.setAttribute("x", xb + (xa - xb) * e); // arrived from position at+1
+        b.setAttribute("x", xa + (xb - xa) * e); // arrived from position at
+      },
+      () => {
+        cancelAnim = null;
+      }
+    );
   }
 
   function buildAffordances(parent) {
@@ -144,14 +165,14 @@ export function create(container, callbacks) {
       }
     }
     if (emptyPair >= 0) {
-      placeBtn(afford.btnDelete, x, midY - unit * 0.95, () => deletePeak(path, g - 1));
+      placeBtn(afford.btnDelete, x, midY - unit * 0.95, () => ({ type: "delete", at: g - 1 }));
     } else {
-      placeBtn(afford.btnInsert, x, midY - unit * 0.95, () => insertPeak(path, g));
+      placeBtn(afford.btnInsert, x, midY - unit * 0.95, () => ({ type: "insert", kind: "peak", at: g }));
     }
 
     // reshape (swap the two steps straddling this gap) where valid
-    const swap = elementaryMove(path, g - 1);
-    if (swap) {
+    const swap = { type: "swap", at: g - 1 };
+    if (applyEdit(path, swap)) {
       afford.reshape.setAttribute("cx", x);
       afford.reshape.setAttribute("cy", midY + unit * 0.7);
       afford.reshape.style.visibility = "visible";

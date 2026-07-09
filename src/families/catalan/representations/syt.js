@@ -112,9 +112,13 @@ export function create(container, callbacks) {
         y: (rowNofN === 1 ? rowY1 : rowY2) - 6,
       },
       removable,
-      grow1: () => pairToPath([...p, 1], [...q, 1]),
-      grow2: () => pairToPath([...p, 2], [...q, 2]),
-      shrink: () => pairToPath(p.slice(0, -1), q.slice(0, -1)),
+      // Appending a box to row 1 of both P and Q is exactly a peak inserted at
+      // the path midpoint; row 2 is a valley there. Shrinking removes the last
+      // box, which is a peak- or valley-removal depending on its row, so it has
+      // no single clean model op — it travels as a plain "set".
+      grow1: () => ({ type: "insert", kind: "peak", at: n }),
+      grow2: () => ({ type: "insert", kind: "valley", at: n }),
+      shrink: () => ({ type: "set", path: pairToPath(p.slice(0, -1), q.slice(0, -1)) }),
     };
 
     plus1 = makeAffordButton("grow", "+");
