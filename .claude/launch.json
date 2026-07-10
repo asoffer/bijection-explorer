@@ -1,11 +1,12 @@
 {
   "version": "0.0.1",
+  "autoPort": true,
   "configurations": [
     {
       "name": "catalan",
       "runtimeExecutable": "python3",
       "runtimeArgs": ["serve.py"],
-      "port": 8731
+      "port": 8732
     }
   ]
 }

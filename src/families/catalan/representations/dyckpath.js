@@ -16,14 +16,15 @@ const head = 34; // vertical headroom for the grow/shrink buttons
 
 export function create(container, callbacks) {
   let svg = null;
-  let region = null;
+  let pairBand = null; // filled trapezoid between the pair's `/` and `\`
+  let betweenBand = null; // nested content sitting on top of the trapezoid
   let geom = null;
   let afford = null; // { ring, btnPeak, btnValley, btnRemovePeak, btnRemoveValley, reshape }
   let cancelAnim = null;
 
   function setPath(path, opts = {}) {
     if (cancelAnim) cancelAnim();
-    const { pairOfStep, openOf, closeOf } = analyze(path);
+    const { openOf, closeOf } = analyze(path);
 
     // A swap (elementary move) keeps n fixed and moves exactly one vertex; a
     // resize (insert/remove a peak or valley) adds or drops one UD/DU pair. Both
@@ -51,11 +52,37 @@ export function create(container, callbacks) {
     const axis = svgEl("line", { x1: X(0), y1: Y(0), x2: X(axisLen), y2: Y(0), class: "axis" });
     next.appendChild(axis);
 
-    // shaded region under the hovered sub-arch (drawn behind the steps)
-    region = svgEl("polygon", { class: "range-band" });
-    next.appendChild(region);
+    // hover shading, drawn behind the steps: a strong trapezoid for the pair
+    // itself (the area between its `/` and `\`) plus a soft region for the
+    // nested content resting on top of it.
+    betweenBand = svgEl("polygon", { class: "range-band" });
+    pairBand = svgEl("polygon", { class: "range-band-pair" });
+    next.appendChild(betweenBand);
+    next.appendChild(pairBand);
 
-    // per-step segments (hoverable / highlightable)
+    // Transparent trapezoid hit areas: hovering anywhere between a pair's `/`
+    // and `\` — not only on the two segments — selects that pair. These
+    // trapezoids tile the whole region under the path, one per pair, so the
+    // innermost one under the cursor wins.
+    for (let p = 0; p < openOf.length; p++) {
+      const o = openOf[p];
+      const c = closeOf[p];
+      const hit = svgEl("polygon", {
+        class: "dyck-hit",
+        points: [
+          [X(o), Y(pts[o])],
+          [X(o + 1), Y(pts[o + 1])],
+          [X(c), Y(pts[c])],
+          [X(c + 1), Y(pts[c + 1])],
+        ]
+          .map((q) => q.join(","))
+          .join(" "),
+      });
+      makeInteractive(hit, p, callbacks, null);
+      next.appendChild(hit);
+    }
+
+    // per-step segments (purely visual; hover is driven by the trapezoids above)
     const stepEls = [];
     for (let j = 0; j < path.length; j++) {
       const seg = svgEl("line", {
@@ -65,7 +92,6 @@ export function create(container, callbacks) {
         y2: Y(pts[j + 1]),
         class: `step ${path[j] === U ? "up" : "down"}`,
       });
-      makeInteractive(seg, pairOfStep[j], callbacks, null);
       next.appendChild(seg);
       stepEls.push(seg);
     }
@@ -366,26 +392,42 @@ export function create(container, callbacks) {
     };
   }
 
-  function showRegion(pairId) {
-    if (!region || !geom) return;
+  function showRegions(pairId) {
+    if (!pairBand || !betweenBand || !geom) return;
     if (pairId === null || pairId === undefined) {
-      region.classList.remove("on");
+      pairBand.classList.remove("on");
+      betweenBand.classList.remove("on");
       return;
     }
-    const open = geom.openOf[pairId];
-    const close = geom.closeOf[pairId];
-    const poly = [];
-    for (let j = open; j <= close + 1; j++) {
-      poly.push(`${geom.X(j)},${geom.Y(geom.pts[j])}`);
+    const { X, Y, pts, openOf, closeOf } = geom;
+    const open = openOf[pairId];
+    const close = closeOf[pairId];
+    // Trapezoid between the two matching steps: base of `/`, top of `/`,
+    // top of `\`, base of `\`.
+    const trap = [
+      [X(open), Y(pts[open])],
+      [X(open + 1), Y(pts[open + 1])],
+      [X(close), Y(pts[close])],
+      [X(close + 1), Y(pts[close + 1])],
+    ];
+    pairBand.setAttribute("points", trap.map((p) => p.join(",")).join(" "));
+    pairBand.classList.add("on");
+    // Nested content rides on top of the trapezoid: the sub-path from the top of
+    // `/` across to the top of `\` (empty for a bare peak, where close = open+1).
+    if (close > open + 1) {
+      const inner = [];
+      for (let j = open + 1; j <= close; j++) inner.push([X(j), Y(pts[j])]);
+      betweenBand.setAttribute("points", inner.map((p) => p.join(",")).join(" "));
+      betweenBand.classList.add("on");
+    } else {
+      betweenBand.classList.remove("on");
     }
-    region.setAttribute("points", poly.join(" "));
-    region.classList.add("on");
   }
 
   return {
     setPath,
     highlight(pairId) {
-      showRegion(pairId);
+      showRegions(pairId);
     },
     destroy() {
       if (cancelAnim) cancelAnim();

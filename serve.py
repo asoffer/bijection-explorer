@@ -1,8 +1,9 @@
 """Static server with caching disabled (so edits show up on reload)."""
 import http.server
+import os
 import socketserver
 
-PORT = 8731
+PORT = int(os.environ.get("PORT", "8731"))
 
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):

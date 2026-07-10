@@ -7,6 +7,8 @@
   --accent: #2f6df6;
   --hl: #ff8a1e;
   --hl-soft: rgba(255, 138, 30, 0.18);
+  --hl2: #8b9099;
+  --hl2-soft: rgba(139, 144, 153, 0.22);
   --up: #2f9e6f;
   --down: #c2544a;
   --handle: #2f6df6;
@@ -25,6 +27,8 @@
     --accent: #5b8bff;
     --hl: #ffab4d;
     --hl-soft: rgba(255, 171, 77, 0.22);
+    --hl2: #aab1bd;
+    --hl2-soft: rgba(170, 177, 189, 0.26);
     --up: #46c78d;
     --down: #e5766b;
     --handle: #5b8bff;
@@ -229,6 +233,13 @@ footer p {
   stroke-width: 4;
   stroke-linecap: round;
   transition: stroke-width 0.1s;
+  pointer-events: none;
+}
+/* transparent per-pair trapezoid hit areas (hover anywhere between / and \) */
+.dyck-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: pointer;
 }
 .step.up {
   stroke: var(--up);
@@ -242,6 +253,7 @@ footer p {
 }
 .vertex {
   fill: var(--muted);
+  pointer-events: none;
 }
 
 /* handles */
@@ -324,11 +336,15 @@ footer p {
 .paren.hl {
   fill: var(--hl);
 }
+.paren.hl-in {
+  fill: var(--hl2);
+}
 
-/* subtree range shading (parens span band, permutation bounding box) */
+/* subtree range shading (parens span band, permutation bounding box, Dyck
+   nested "between" region) */
 .range-band {
-  fill: var(--hl-soft);
-  stroke: var(--hl);
+  fill: var(--hl2-soft);
+  stroke: var(--hl2);
   stroke-opacity: 0.5;
   stroke-width: 1.5;
   opacity: 0;
@@ -336,6 +352,21 @@ footer p {
   pointer-events: none;
 }
 .range-band.on {
+  opacity: 1;
+}
+
+/* the pair itself, as a filled region (Dyck trapezoid between `/` and `\`) */
+.range-band-pair {
+  fill: var(--hl);
+  fill-opacity: 0.3;
+  stroke: var(--hl);
+  stroke-opacity: 0.7;
+  stroke-width: 1.5;
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+.range-band-pair.on {
   opacity: 1;
 }
 
@@ -352,6 +383,13 @@ footer p {
 }
 .treenode.hl {
   fill: var(--hl);
+}
+.treenode.hl-in {
+  fill: var(--hl2);
+}
+.branch.hl-in {
+  stroke: var(--hl2);
+  stroke-width: 3;
 }
 .leaf {
   fill: var(--muted);
@@ -372,6 +410,12 @@ footer p {
   fill-opacity: 0.4;
   stroke: var(--hl);
   stroke-opacity: 1;
+}
+.triangle.hl-in {
+  fill: var(--hl2);
+  fill-opacity: 0.28;
+  stroke: var(--hl2);
+  stroke-opacity: 0.7;
 }
 .triangle.ghost {
   fill: var(--shrink);
@@ -419,6 +463,9 @@ footer p {
 .ptree-node.hl {
   fill: var(--hl);
 }
+.ptree-node.hl-in {
+  fill: var(--hl2);
+}
 
 /* non-crossing chords */
 .chord {
@@ -430,6 +477,10 @@ footer p {
 .chord.hl {
   stroke: var(--hl);
   stroke-width: 4;
+}
+.chord.hl-in {
+  stroke: var(--hl2);
+  stroke-width: 3;
 }
 .chord-hit {
   stroke: transparent;
@@ -455,6 +506,11 @@ footer p {
 .syt-cell.hl .syt-box {
   fill: var(--hl-soft);
   stroke: var(--hl);
+  stroke-width: 2.5;
+}
+.syt-cell.hl-in .syt-box {
+  fill: var(--hl2-soft);
+  stroke: var(--hl2);
 }
 .syt-num {
   fill: var(--ink);
@@ -565,4 +621,7 @@ footer p {
 }
 .permpt.hl .permdot {
   fill: var(--hl);
+}
+.permpt.hl-in .permdot {
+  fill: var(--hl2);
 }

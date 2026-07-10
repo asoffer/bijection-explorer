@@ -70,18 +70,21 @@ export function register(registry, pairId, el) {
   el.dataset.pair = String(pairId);
 }
 
-// Highlight every part whose pair id lies in the inclusive range [lo, hi]
-// (a subtree). `currentEls` is the list of elements lit last time; returns the
-// new list. Pass range = null to clear.
+// Highlight the inclusive range [lo, hi] (a subtree) in two tiers: the hovered
+// pair itself — range[0] — gets class `hl`, while every part nested strictly
+// inside it (range[0]+1 .. range[1], the "between" region: the substring,
+// sub-arch, or descendants) gets `hl-in`. `currentEls` is the list of elements
+// lit last time; returns the new list. Pass range = null to clear.
 export function applyHighlight(registry, currentEls, range) {
-  for (const el of currentEls) el.classList.remove("hl");
+  for (const el of currentEls) el.classList.remove("hl", "hl-in");
   const next = [];
   if (range) {
     for (let p = range[0]; p <= range[1]; p++) {
       const els = registry.get(p);
       if (!els) continue;
+      const cls = p === range[0] ? "hl" : "hl-in";
       for (const el of els) {
-        el.classList.add("hl");
+        el.classList.add(cls);
         next.push(el);
       }
     }
