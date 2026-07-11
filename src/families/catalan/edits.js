@@ -38,7 +38,7 @@ export function applyEdit(path, edit) {
       return elementaryMove(path, edit.at);
     case "rotate": {
       const { pairOfStep } = analyze(path);
-      return treeToPath(rotateAtPair(pathToTree(path, pairOfStep), edit.pair));
+      return treeToPath(rotateAtPair(pathToTree(path, pairOfStep), edit.pair, edit.dir));
     }
     case "set":
       return edit.path;

@@ -45,22 +45,22 @@ export function internalCount(t) {
   return t.leaf ? 0 : 1 + internalCount(t.left) + internalCount(t.right);
 }
 
-// Rotate at the internal node whose pair id is `pair`. Prefers a left rotation
-// (needs an internal right child); falls back to a right rotation. Returns a
-// new tree (structurally shared where unchanged). No-op if neither is possible.
-export function rotateAtPair(tree, pair) {
+// Rotate at the internal node whose pair id is `pair`. `dir` ("left"|"right")
+// forces the direction; without it, prefer a left rotation (needs an internal
+// right child) and fall back to a right one. Returns a new tree (structurally
+// shared where unchanged). No-op if the requested rotation isn't possible.
+export function rotateAtPair(tree, pair, dir) {
   function rec(t) {
     if (t.leaf) return t;
-    if (t.pair === pair) return rotate(t);
+    if (t.pair === pair) return rotate(t, dir);
     return { ...t, left: rec(t.left), right: rec(t.right) };
   }
   return rec(tree);
 }
 
-function rotate(x) {
-  // Left rotation: x has internal right child y.
-  //   x(A, y(B, C))  ->  y(x(A, B), C)
-  if (!x.right.leaf) {
+function rotate(x, dir) {
+  // Left rotation: x has internal right child y.  x(A, y(B, C)) -> y(x(A, B), C)
+  const left = () => {
     const y = x.right;
     return {
       leaf: false,
@@ -68,10 +68,9 @@ function rotate(x) {
       left: { leaf: false, pair: x.pair, left: x.left, right: y.left },
       right: y.right,
     };
-  }
-  // Right rotation: x has internal left child y.
-  //   x(y(A, B), C)  ->  y(A, x(B, C))
-  if (!x.left.leaf) {
+  };
+  // Right rotation: x has internal left child y.  x(y(A, B), C) -> y(A, x(B, C))
+  const right = () => {
     const y = x.left;
     return {
       leaf: false,
@@ -79,7 +78,11 @@ function rotate(x) {
       left: y.left,
       right: { leaf: false, pair: x.pair, left: y.right, right: x.right },
     };
-  }
+  };
+  if (dir === "left") return x.right.leaf ? x : left();
+  if (dir === "right") return x.left.leaf ? x : right();
+  if (!x.right.leaf) return left();
+  if (!x.left.leaf) return right();
   return x; // both children are leaves: nothing to rotate
 }
 

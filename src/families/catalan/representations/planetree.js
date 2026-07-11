@@ -5,9 +5,7 @@ import {
   register,
   applyHighlight,
   makeInteractive,
-  makeAffordButton,
-  showAffordButton,
-  hideAffordButton,
+  affordMenu,
   tween,
 } from "../../../core/view.js";
 
@@ -15,7 +13,7 @@ export const meta = {
   id: "planetree",
   name: "Plane tree",
   blurb:
-    "An ordered rooted tree with n+1 vertices. Walk it depth-first: up = descend into a new child edge, down = return. Hover a vertex to add a child, or a leaf to prune it.",
+    "An ordered rooted tree with n+1 vertices. Walk it depth-first: up = descend into a new child edge, down = return. Hover a vertex to add a child (below) or a sibling on either side; hover a leaf to also prune it (above).",
 };
 
 // Each up-step descends into a fresh child edge (carrying that pair id); each
@@ -60,12 +58,12 @@ export function create(container, callbacks) {
   const registry = makeRegistry();
   let currentEls = [];
   let rangeOf = [];
-  let plus = null;
-  let minus = null;
+  let menu = null;
   let cancelAnim = null;
 
   function setPath(path, opts = {}) {
     if (cancelAnim) cancelAnim();
+    if (menu) menu.destroy();
     registry.clear();
     currentEls = [];
     const { pairOfStep, openOf, closeOf, n } = analyze(path);
@@ -82,6 +80,7 @@ export function create(container, callbacks) {
     const Y = (d) => pad + d * unit + unit / 2;
 
     const next = makeSvg(`0 0 ${W} ${H}`);
+    menu = affordMenu(next, callbacks.onEdit);
 
     (function drawEdges(v) {
       for (const c of v.children) {
@@ -108,33 +107,40 @@ export function create(container, callbacks) {
 
     for (const v of verts) {
       const isRoot = v.pair === null;
+      const cx = X(v.x);
+      const cy = Y(v.depth);
       const dot = svgEl("circle", {
-        cx: X(v.x),
-        cy: Y(v.depth),
+        cx,
+        cy,
         r: isRoot ? 7 : 6,
-        class: isRoot ? "ptree-root" : "ptree-node interactive",
+        class: isRoot ? "ptree-root" : "ptree-node",
       });
-      if (!isRoot) {
-        register(registry, v.pair, dot);
-        makeInteractive(dot, v.pair, callbacks, null);
-      }
-      dot.addEventListener("pointerenter", () => {
-        const addPos = isRoot ? path.length : closeOf[v.pair];
-        showAffordButton(plus, X(v.x), Y(v.depth) + 22, callbacks.onEdit, () => ({
-          type: "insert",
-          kind: "peak",
-          at: addPos,
-        }));
-        if (!isRoot && v.children.length === 0) {
-          showAffordButton(minus, X(v.x) + 20, Y(v.depth) - 18, callbacks.onEdit, () => ({
-            type: "remove",
-            kind: "peak",
-            at: openOf[v.pair],
-          }));
-        }
-      });
+      if (!isRoot) register(registry, v.pair, dot); // the dot is what lights up
       next.appendChild(dot);
       v.dotEl = dot;
+
+      // A generous transparent halo is the actual hover/interaction surface, so
+      // the node is easy to land on and the menu has slack around it.
+      const halo = svgEl("circle", { cx, cy, r: 18, class: "afford-hit" });
+      if (!isRoot) {
+        halo.addEventListener("pointerenter", () => callbacks.onHover(v.pair));
+        halo.addEventListener("pointerleave", () => callbacks.onLeave());
+      }
+      // Leaf insertions map to peaks in the path: a child appends at the node's
+      // close step; a sibling before/after inserts just outside the node's span.
+      const open = isRoot ? null : openOf[v.pair];
+      const close = isRoot ? null : closeOf[v.pair];
+      const isLeaf = !isRoot && v.children.length === 0;
+      menu.anchor(halo, isRoot ? "root" : `v${v.pair}`, cx, cy, () => [
+        // down — add a child (appended as the last child)
+        { cls: "grow", glyph: "+", x: cx, y: cy + 26, produce: () => ({ type: "insert", kind: "peak", at: isRoot ? path.length : close }) },
+        // left / right — add a sibling just before / after this node
+        !isRoot ? { cls: "grow", glyph: "+", x: cx - 26, y: cy, produce: () => ({ type: "insert", kind: "peak", at: open }) } : null,
+        !isRoot ? { cls: "grow", glyph: "+", x: cx + 26, y: cy, produce: () => ({ type: "insert", kind: "peak", at: close + 1 }) } : null,
+        // up — prune this leaf back into its parent
+        isLeaf ? { cls: "shrink", glyph: "−", x: cx, y: cy - 26, produce: () => ({ type: "remove", kind: "peak", at: open }) } : null,
+      ]);
+      next.appendChild(halo);
     }
 
     // A swap promotes a vertex from child-of-X to sibling-of-X (or the reverse):
@@ -316,15 +322,6 @@ export function create(container, callbacks) {
       runResize(frame);
       return true;
     }
-
-    plus = makeAffordButton("grow", "+");
-    minus = makeAffordButton("shrink", "−");
-    next.appendChild(plus);
-    next.appendChild(minus);
-    next.addEventListener("pointerleave", () => {
-      hideAffordButton(plus);
-      hideAffordButton(minus);
-    });
 
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);

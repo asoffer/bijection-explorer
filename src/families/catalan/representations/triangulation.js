@@ -6,9 +6,7 @@ import {
   register,
   applyHighlight,
   makeInteractive,
-  makeAffordButton,
-  showAffordButton,
-  hideAffordButton,
+  affordMenu,
   tween,
 } from "../../../core/view.js";
 
@@ -16,7 +14,7 @@ export const meta = {
   id: "triangulation",
   name: "Polygon triangulation",
   blurb:
-    "A triangulation of a convex (n+2)-gon: each triangle is a node, sharing the base edge (0,n+1). Click a triangle to flip its diagonal, hover a side to bevel in a new vertex, or an ear to remove it.",
+    "A triangulation of a convex (n+2)-gon: each triangle is a node, sharing the base edge (0,n+1). Hover a diagonal to flip it, a side to bevel in a new vertex, or an ear to remove it.",
 };
 
 // In-order leaf path-positions; leaf k is the boundary edge (k, k+1).
@@ -58,13 +56,13 @@ export function create(container, callbacks) {
   let rangeOf = [];
   let prev = null; // { M, vpos, tris } from the previous render
   let cancelAnim = null;
-  let plus = null;
-  let minus = null;
+  let menu = null;
 
   function setPath(path, opts = {}) {
     registry.clear();
     currentEls = [];
     if (cancelAnim) cancelAnim();
+    if (menu) menu.destroy();
 
     const { pairOfStep, openOf, closeOf } = analyze(path);
     const n = path.length / 2;
@@ -91,6 +89,7 @@ export function create(container, callbacks) {
     });
 
     const next = makeSvg(`0 0 ${W} ${H}`);
+    menu = affordMenu(next, callbacks.onEdit);
 
     const triangles = [];
     collectTriangles(tree, 0, M - 1, triangles);
@@ -99,22 +98,16 @@ export function create(container, callbacks) {
     for (const t of triangles) {
       const poly = svgEl("polygon", { class: "triangle" });
       register(registry, t.pair, poly);
-      makeInteractive(poly, t.pair, callbacks, () => {
-        callbacks.onEdit({ type: "rotate", pair: t.pair });
-      });
+      makeInteractive(poly, t.pair, callbacks, null); // hover highlights; flips live on the diagonals
       // an ear (leaf-pair node) can be removed, collapsing along its outer edge
       if (closeOf[t.pair] === openOf[t.pair] + 1) {
-        poly.addEventListener("pointerenter", () => {
-          const c = {
-            x: (newVpos[t.a].x + newVpos[t.b].x + newVpos[t.c].x) / 3,
-            y: (newVpos[t.a].y + newVpos[t.b].y + newVpos[t.c].y) / 3,
-          };
-          showAffordButton(minus, c.x, c.y, callbacks.onEdit, () => ({
-            type: "remove",
-            kind: "peak",
-            at: openOf[t.pair],
-          }));
-        });
+        const c = {
+          x: (newVpos[t.a].x + newVpos[t.b].x + newVpos[t.c].x) / 3,
+          y: (newVpos[t.a].y + newVpos[t.b].y + newVpos[t.c].y) / 3,
+        };
+        menu.anchor(poly, `tri${t.pair}`, c.x, c.y, () => [
+          { cls: "shrink", glyph: "−", x: c.x, y: c.y, produce: () => ({ type: "remove", kind: "peak", at: openOf[t.pair] }) },
+        ]);
       }
       next.appendChild(poly);
       triEls.push({ el: poly, a: t.a, b: t.b, c: t.c, pair: t.pair });
@@ -131,14 +124,10 @@ export function create(container, callbacks) {
       if (!isBase) {
         const hit = svgEl("line", { class: "edge-hit" });
         const mid = { x: (newVpos[v].x + newVpos[w].x) / 2, y: (newVpos[v].y + newVpos[w].y) / 2 };
-        const btnAt = outward(mid, 16);
-        hit.addEventListener("pointerenter", () =>
-          showAffordButton(plus, btnAt.x, btnAt.y, callbacks.onEdit, () => ({
-            type: "insert",
-            kind: "peak",
-            at: leafPos[v],
-          }))
-        );
+        const btnAt = outward(mid, 24);
+        menu.anchor(hit, `edge${v}`, mid.x, mid.y, () => [
+          { cls: "grow", glyph: "+", x: btnAt.x, y: btnAt.y, produce: () => ({ type: "insert", kind: "peak", at: leafPos[v] }) },
+        ]);
         next.appendChild(hit);
         edgeEls.push({ el: hit, v, w });
       }
@@ -160,14 +149,26 @@ export function create(container, callbacks) {
       labelEls.push({ el: label, v });
     }
 
-    plus = makeAffordButton("grow", "+");
-    minus = makeAffordButton("shrink", "−");
-    next.appendChild(plus);
-    next.appendChild(minus);
-    next.addEventListener("pointerleave", () => {
-      hideAffordButton(plus);
-      hideAffordButton(minus);
-    });
+    // Flip affordances live on the diagonals. Each internal (non-root) triangle's
+    // base edge (lo,hi) is a diagonal shared with its parent; flipping it is a
+    // rotation of the parent toward this child (a left rotation pulls up a right
+    // child, a right rotation a left child).
+    (function walkDiagonals(t, lo, hi, parentPair, side) {
+      if (t.leaf) return;
+      const k = lo + leafCount(t.left);
+      if (parentPair !== null) {
+        const dir = side === "right" ? "left" : "right";
+        const mid = { x: (newVpos[lo].x + newVpos[hi].x) / 2, y: (newVpos[lo].y + newVpos[hi].y) / 2 };
+        const hit = svgEl("line", { class: "diag-hit" });
+        menu.anchor(hit, `diag${lo}-${hi}`, mid.x, mid.y, () => [
+          { cls: "reshape", glyph: "⇄", x: mid.x, y: mid.y, produce: () => ({ type: "rotate", pair: parentPair, dir }) },
+        ]);
+        next.appendChild(hit);
+        edgeEls.push({ el: hit, v: lo, w: hi }); // positioned alongside the polygon edges
+      }
+      walkDiagonals(t.left, lo, k, t.pair, "left");
+      walkDiagonals(t.right, k, hi, t.pair, "right");
+    })(tree, 0, M - 1, null, null);
 
     function applyPositions(vpos) {
       for (const t of triEls) {
@@ -307,7 +308,7 @@ export function create(container, callbacks) {
           animateShrink(j, prev.vpos);
           animated = true;
         }
-      } else if (edit.type === "swap" && opts.prevPath && M === prev.M) {
+      } else if ((edit.type === "swap" || edit.type === "rotate") && opts.prevPath && M === prev.M) {
         animated = animateFlip(opts.prevPath);
       }
     }

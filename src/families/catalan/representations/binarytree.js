@@ -6,9 +6,7 @@ import {
   register,
   applyHighlight,
   makeInteractive,
-  makeAffordButton,
-  showAffordButton,
-  hideAffordButton,
+  affordMenu,
   tween,
 } from "../../../core/view.js";
 
@@ -24,12 +22,12 @@ export function create(container, callbacks) {
   const registry = makeRegistry();
   let currentEls = [];
   let rangeOf = [];
-  let plus = null;
-  let minus = null;
+  let menu = null;
   let cancelAnim = null;
 
   function setPath(path, opts = {}) {
     if (cancelAnim) cancelAnim();
+    if (menu) menu.destroy();
     registry.clear();
     currentEls = [];
     const { pairOfStep, openOf, closeOf, n } = analyze(path);
@@ -45,6 +43,7 @@ export function create(container, callbacks) {
     const Y = (d) => pad + d * unit + unit / 2;
 
     const next = makeSvg(`0 0 ${W} ${H}`);
+    menu = affordMenu(next, callbacks.onEdit);
 
     for (const e of edges) {
       e.el = svgEl("line", {
@@ -58,40 +57,30 @@ export function create(container, callbacks) {
     }
 
     for (const node of nodes) {
+      const cx = X(node.x);
+      const cy = Y(node.depth);
       if (node.leaf) {
-        const rect = svgEl("rect", {
-          x: X(node.x) - 5,
-          y: Y(node.depth) - 5,
-          width: 10,
-          height: 10,
-          class: "leaf interactive",
-        });
-        rect.addEventListener("pointerenter", () =>
-          showAffordButton(plus, X(node.x), Y(node.depth) + 20, callbacks.onEdit, () => ({
-            type: "insert",
-            kind: "peak",
-            at: node.pos,
-          }))
-        );
+        const rect = svgEl("rect", { x: cx - 5, y: cy - 5, width: 10, height: 10, class: "leaf" });
         next.appendChild(rect);
         node.el = rect;
+        // generous transparent halo → a hoverable leaf that sprouts on "+"
+        const halo = svgEl("circle", { cx, cy, r: 16, class: "afford-hit" });
+        menu.anchor(halo, `leaf${node.pos}`, cx, cy, () => [
+          { cls: "grow", glyph: "+", x: cx, y: cy + 24, produce: () => ({ type: "insert", kind: "peak", at: node.pos }) },
+        ]);
+        next.appendChild(halo);
         continue;
       }
-      const c = svgEl("circle", { cx: X(node.x), cy: Y(node.depth), r: 13, class: "treenode" });
+      const c = svgEl("circle", { cx, cy, r: 13, class: "treenode" });
       register(registry, node.pair, c);
       makeInteractive(c, node.pair, callbacks, () => {
         callbacks.onEdit({ type: "rotate", pair: node.pair });
       });
       // a leaf-pair (cherry) node can be pruned back to a single leaf
-      const isCherry = closeOf[node.pair] === openOf[node.pair] + 1;
-      if (isCherry) {
-        c.addEventListener("pointerenter", () =>
-          showAffordButton(minus, X(node.x) + 20, Y(node.depth) - 18, callbacks.onEdit, () => ({
-            type: "remove",
-            kind: "peak",
-            at: openOf[node.pair],
-          }))
-        );
+      if (closeOf[node.pair] === openOf[node.pair] + 1) {
+        menu.anchor(c, `n${node.pair}`, cx, cy, () => [
+          { cls: "shrink", glyph: "−", x: cx + 24, y: cy - 22, produce: () => ({ type: "remove", kind: "peak", at: openOf[node.pair] }) },
+        ]);
       }
       next.appendChild(c);
       node.el = c;
@@ -267,16 +256,6 @@ export function create(container, callbacks) {
         cancelAnim = null;
       });
     }
-
-    // affordance buttons, on top, hidden until a leaf / cherry is hovered
-    plus = makeAffordButton("grow", "+");
-    minus = makeAffordButton("shrink", "−");
-    next.appendChild(plus);
-    next.appendChild(minus);
-    next.addEventListener("pointerleave", () => {
-      hideAffordButton(plus);
-      hideAffordButton(minus);
-    });
 
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);

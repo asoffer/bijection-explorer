@@ -1,13 +1,13 @@
 import { U, analyze, subtreeRange } from "../model.js";
 import { applyEdit } from "../edits.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import { makeRegistry, register, applyHighlight, makeInteractive, tween } from "../../../core/view.js";
+import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween } from "../../../core/view.js";
 
 export const meta = {
   id: "parens",
   name: "Balanced parentheses",
   blurb:
-    "Each up-step is an open bracket, each down-step its matching close. Hover to shade the substring a pair spans; hover a gap to insert () or an empty () to delete it; click a caret to swap neighbours.",
+    "Each up-step is an open bracket, each down-step its matching close. Hover a bracket to shade the substring its pair spans, or a gap to insert () or )( , remove an empty () or )( , or swap the two neighbours.",
 };
 
 export function create(container, callbacks) {
@@ -17,11 +17,12 @@ export function create(container, callbacks) {
   let rangeOf = [];
   let band = null;
   let geom = null;
-  let afford = null;
+  let menu = null;
   let cancelAnim = null;
 
   function setPath(path, opts = {}) {
     if (cancelAnim) cancelAnim();
+    if (menu) menu.destroy();
     registry.clear();
     currentEls = [];
     const { pairOfStep, openOf, closeOf, n } = analyze(path);
@@ -37,10 +38,51 @@ export function create(container, callbacks) {
     geom = { unit, pad, cx, gapX, midY, openOf, closeOf, path, W };
 
     const next = makeSvg(`0 0 ${W} ${H}`);
+    menu = affordMenu(next, callbacks.onEdit);
 
     // backing band (drawn first, hidden until hover)
     band = svgEl("rect", { class: "range-band", rx: 10, ry: 10, height: unit * 1.5, y: midY - unit * 0.75 });
     next.appendChild(band);
+
+    // Per-gap edit menus. A gap sits at a bracket boundary; its transparent hit
+    // strip is drawn *under* the glyphs, so hovering a bracket still highlights
+    // its pair while the exposed space between brackets opens the gap's menu.
+    // The row is horizontal, so options stack vertically along the gap line:
+    // inserts sit next to the row, remove/swap just beyond them.
+    const heights = [0];
+    for (let j = 0; j < path.length; j++) heights.push(heights[j] + path[j]);
+    // Every sensible option at gap g: insert a peak `()` (always) above and a
+    // valley `)(` below wherever there's nesting depth; remove an empty `()` or
+    // a `)(` juncture sitting at the gap; swap the two straddling brackets.
+    const gapOptions = (g) => {
+      const x = gapX(g);
+      const h = heights[g];
+      const isPeak = g >= 1 && g <= path.length - 1 && path[g - 1] === U && path[g] !== U;
+      const isValley = g >= 1 && g <= path.length - 1 && path[g - 1] !== U && path[g] === U;
+      const opts = [
+        { cls: "grow", glyph: "+", x, y: midY - 26, produce: () => ({ type: "insert", kind: "peak", at: g }) },
+      ];
+      if (h >= 1)
+        opts.push({ cls: "grow", glyph: "+", x, y: midY + 26, produce: () => ({ type: "insert", kind: "valley", at: g }) });
+      if (isPeak)
+        opts.push({ cls: "shrink", glyph: "−", x, y: midY - 50, produce: () => ({ type: "remove", kind: "peak", at: g - 1 }) });
+      else if (isValley)
+        opts.push({ cls: "shrink", glyph: "−", x, y: midY - 50, produce: () => ({ type: "remove", kind: "valley", at: g - 1 }) });
+      const swap = { type: "swap", at: g - 1 };
+      if (applyEdit(path, swap)) opts.push({ cls: "reshape", glyph: "⇄", x, y: midY + 50, produce: () => swap });
+      return opts;
+    };
+    for (let g = 0; g <= path.length; g++) {
+      const hit = svgEl("rect", {
+        x: gapX(g) - unit / 2,
+        y: midY - unit * 1.5,
+        width: unit,
+        height: unit * 3,
+        class: "afford-hit",
+      });
+      menu.anchor(hit, `g${g}`, gapX(g), midY, () => gapOptions(g));
+      next.appendChild(hit);
+    }
 
     // brackets
     const glyphEls = [];
@@ -59,10 +101,6 @@ export function create(container, callbacks) {
       next.appendChild(t);
       glyphEls.push(t);
     }
-
-    afford = buildAffordances(next);
-    next.addEventListener("pointermove", updateAfford);
-    next.addEventListener("pointerleave", hideAfford);
 
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
@@ -167,97 +205,6 @@ export function create(container, callbacks) {
     );
   }
 
-  function buildAffordances(parent) {
-    const g = svgEl("g", { class: "afford-layer" });
-    const guide = svgEl("line", { class: "afford-ring", visibility: "hidden" });
-    g.appendChild(guide);
-    const mkBtn = (cls, glyph) => {
-      const btn = svgEl("g", { class: `afford ${cls}`, visibility: "hidden" });
-      btn.appendChild(svgEl("circle", { r: 11, cx: 0, cy: 0 }));
-      const t = svgEl("text", {
-        x: 0,
-        y: 0,
-        class: "afford-glyph",
-        "text-anchor": "middle",
-        "dominant-baseline": "central",
-      });
-      t.textContent = glyph;
-      btn.appendChild(t);
-      g.appendChild(btn);
-      return btn;
-    };
-    const btnInsert = mkBtn("grow", "+");
-    const btnDelete = mkBtn("shrink", "−");
-    const reshape = svgEl("circle", { r: 6, class: "afford-reshape", visibility: "hidden" });
-    g.appendChild(reshape);
-    parent.appendChild(g);
-    return { guide, btnInsert, btnDelete, reshape };
-  }
-
-  function placeBtn(btn, x, y, onClick) {
-    btn.setAttribute("transform", `translate(${x},${y})`);
-    btn.style.visibility = "visible";
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      const p = onClick();
-      if (p) callbacks.onEdit(p);
-    };
-  }
-
-  function hideAfford() {
-    if (!afford) return;
-    afford.guide.style.visibility = "hidden";
-    for (const b of [afford.btnInsert, afford.btnDelete]) {
-      b.style.visibility = "hidden";
-      b.onclick = null;
-    }
-    afford.reshape.style.visibility = "hidden";
-    afford.reshape.onclick = null;
-  }
-
-  function updateAfford(e) {
-    if (!afford || !geom) return;
-    const { unit, pad, gapX, midY, openOf, closeOf, path, W } = geom;
-    const rect = svg.getBoundingClientRect();
-    const vbX = ((e.clientX - rect.left) / rect.width) * W;
-    let g = Math.round((vbX - pad) / unit);
-    g = Math.max(0, Math.min(path.length, g));
-
-    hideAfford();
-    const x = gapX(g);
-    afford.guide.setAttribute("x1", x);
-    afford.guide.setAttribute("x2", x);
-    afford.guide.setAttribute("y1", midY - unit * 0.8);
-    afford.guide.setAttribute("y2", midY + unit * 0.8);
-    afford.guide.style.visibility = "visible";
-
-    // is this gap the inside of an empty pair "()" ?
-    let emptyPair = -1;
-    for (let p = 0; p < openOf.length; p++) {
-      if (openOf[p] === g - 1 && closeOf[p] === g) {
-        emptyPair = p;
-        break;
-      }
-    }
-    if (emptyPair >= 0) {
-      placeBtn(afford.btnDelete, x, midY - unit * 0.95, () => ({ type: "remove", kind: "peak", at: g - 1 }));
-    } else {
-      placeBtn(afford.btnInsert, x, midY - unit * 0.95, () => ({ type: "insert", kind: "peak", at: g }));
-    }
-
-    // reshape (swap the two steps straddling this gap) where valid
-    const swap = { type: "swap", at: g - 1 };
-    if (applyEdit(path, swap)) {
-      afford.reshape.setAttribute("cx", x);
-      afford.reshape.setAttribute("cy", midY + unit * 0.7);
-      afford.reshape.style.visibility = "visible";
-      afford.reshape.onclick = (ev) => {
-        ev.stopPropagation();
-        callbacks.onEdit(swap);
-      };
-    }
-  }
-
   function showBand(range) {
     if (!band || !geom) return;
     if (!range) {
@@ -280,6 +227,7 @@ export function create(container, callbacks) {
       showBand(range);
     },
     destroy() {
+      if (menu) menu.destroy();
       if (svg) svg.remove();
     },
   };

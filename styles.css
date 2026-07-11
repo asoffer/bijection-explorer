@@ -273,6 +273,12 @@ footer p {
   fill: var(--down);
 }
 
+/* transparent hover/interaction halo: the generous hit target around a node */
+.afford-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
 /* grow / shrink affordances (hover-revealed) */
 .afford-ring {
   fill: none;
@@ -324,6 +330,18 @@ footer p {
 }
 .afford-reshape:hover {
   opacity: 1;
+}
+.afford.reshape circle {
+  stroke: var(--handle);
+}
+.afford.reshape .afford-glyph {
+  fill: var(--handle);
+}
+.afford.reshape:hover circle {
+  fill: var(--handle);
+}
+.afford.reshape:hover .afford-glyph {
+  fill: var(--panel);
 }
 
 /* parentheses */
@@ -432,7 +450,8 @@ footer p {
 .polyedge.base {
   stroke: var(--accent);
 }
-.edge-hit {
+.edge-hit,
+.diag-hit {
   stroke: transparent;
   stroke-width: 14;
   stroke-linecap: round;

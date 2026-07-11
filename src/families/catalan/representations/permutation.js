@@ -1,21 +1,12 @@
 import { U, analyze, subtreeRange } from "../model.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import {
-  makeRegistry,
-  register,
-  applyHighlight,
-  makeInteractive,
-  makeAffordButton,
-  showAffordButton,
-  hideAffordButton,
-  tween,
-} from "../../../core/view.js";
+import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween } from "../../../core/view.js";
 
 export const meta = {
   id: "perm",
   name: "312-avoiding permutation",
   blurb:
-    "Read the path as stack operations — up = push the next value, down = pop and output. Feeding 1,2,…,n through one stack yields exactly the 312-avoiding permutations. Swap neighbours with a caret, hover a column gap to insert a value, or a push-then-pop point to remove it.",
+    "Read the path as stack operations — up = push the next value, down = pop and output. Feeding 1,2,…,n through one stack yields exactly the 312-avoiding permutations. Hover a column gap to insert a value or swap neighbours, a push-then-pop point to remove it, or the notch between two blocks to merge them.",
 };
 
 // Dyck path -> permutation (output of one stack fed the input 1..n).
@@ -56,18 +47,17 @@ export function create(container, callbacks) {
   let rangeOf = [];
   let box = null;
   let geom = null;
-  let plus = null;
-  let minus = null;
-  let reshape = null;
+  let menu = null;
   let cancelAnim = null;
 
   function setPath(path, opts = {}) {
     if (cancelAnim) cancelAnim();
+    if (menu) menu.destroy();
     registry.clear();
     currentEls = [];
     const perm = permutationFromPath(path);
     const n = perm.length;
-    const { openOf, closeOf } = analyze(path);
+    const { openOf, closeOf, pairOfStep } = analyze(path);
     rangeOf = Array.from({ length: n }, (_, p) => subtreeRange(openOf, closeOf, p));
     // posOf[value] = output position of that value
     const posOf = [];
@@ -108,6 +98,46 @@ export function create(container, callbacks) {
     box = svgEl("rect", { class: "range-band", rx: 8, ry: 8 });
     next.appendChild(box);
 
+    menu = affordMenu(next, callbacks.onEdit);
+
+    // Column gaps (drawn under the dots): insert a value above the grid, or swap
+    // the two neighbouring columns below it where the result stays 312-avoiding.
+    const gridTop = pad;
+    const gridBot = pad + n * unit;
+    for (let gp = 0; gp <= n; gp++) {
+      const gx = pad + gp * unit;
+      const hit = svgEl("rect", { x: gx - unit / 2, y: gridTop - 28, width: unit, height: n * unit + 56, class: "afford-hit" });
+      menu.anchor(hit, `col${gp}`, gx, (gridTop + gridBot) / 2, () => {
+        const opts = [
+          { cls: "grow", glyph: "+", x: gx, y: gridTop - 16, produce: () => ({ type: "insert", kind: "peak", at: gp < n ? downIdx[gp] : path.length }) },
+        ];
+        if (gp >= 1 && gp <= n - 1) {
+          const swapped = perm.slice();
+          [swapped[gp - 1], swapped[gp]] = [swapped[gp], swapped[gp - 1]];
+          const moved = pathFromPermutation(swapped);
+          if (moved) opts.push({ cls: "reshape", glyph: "⇄", x: gx, y: gridBot + 16, produce: () => ({ type: "set", path: moved }) });
+        }
+        return opts;
+      });
+      next.appendChild(hit);
+    }
+
+    // Valley notches: a valley (D then U) sits between two sibling blocks, whose
+    // lowest points are the left block's min value and the right block's min. The
+    // "−" lives at the empty corner where those two points will meet on merge.
+    for (let i = 0; i + 1 < path.length; i++) {
+      if (path[i] !== -1 || path[i + 1] !== U) continue;
+      const L = pairOfStep[i];
+      const R = pairOfStep[i + 1];
+      const mx = X(posOf[R + 1]); // right block's lowest column
+      const my = Y(L + 1); // left block's lowest row
+      const hit = svgEl("circle", { cx: mx, cy: my, r: 15, class: "afford-hit" });
+      menu.anchor(hit, `valley${i}`, mx, my, () => [
+        { cls: "shrink", glyph: "−", x: mx, y: my, produce: () => ({ type: "remove", kind: "valley", at: i }) },
+      ]);
+      next.appendChild(hit);
+    }
+
     // permutation points (i, value)
     const groupEls = [];
     for (let i = 0; i < n; i++) {
@@ -126,18 +156,15 @@ export function create(container, callbacks) {
       g.appendChild(label);
       register(registry, v - 1, g);
       makeInteractive(g, v - 1, callbacks, null);
+      // a value pushed then immediately popped (a peak) can be removed
+      if (closeOf[v - 1] === openOf[v - 1] + 1) {
+        menu.anchor(g, `pt${v}`, X(i), Y(v), () => [
+          { cls: "shrink", glyph: "−", x: X(i), y: Y(v) - 24, produce: () => ({ type: "remove", kind: "peak", at: openOf[v - 1] }) },
+        ]);
+      }
       next.appendChild(g);
       groupEls.push(g);
     }
-
-    plus = makeAffordButton("grow", "+");
-    minus = makeAffordButton("shrink", "−");
-    reshape = svgEl("circle", { r: 6, class: "afford-reshape", visibility: "hidden" });
-    next.appendChild(plus);
-    next.appendChild(minus);
-    next.appendChild(reshape);
-    next.addEventListener("pointermove", updateAfford);
-    next.addEventListener("pointerleave", hideAfford);
 
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
@@ -230,8 +257,87 @@ export function create(container, callbacks) {
       });
     }
 
+    // Remove a valley = merge two sibling blocks. Their two lowest points slide
+    // together — the left block's rightwards, the right block's downwards — meet
+    // at the corner and fuse; then the rest of the grid reflows to the new plot.
+    function animateValleyRemove(edit) {
+      const oldA = analyze(opts.prevPath);
+      const L = oldA.pairOfStep[edit.at];
+      const R = oldA.pairOfStep[edit.at + 1];
+      const Lval = L + 1;
+      const Rval = R + 1; // the value that disappears (right block's lowest)
+      const posOld = [];
+      oldPerm.forEach((v, idx) => (posOld[v] = idx));
+      const meet = { x: X(posOld[Rval]), y: Y(Lval) };
+      const lerp = (a, b, e) => a + (b - a) * e;
+
+      const specs = [];
+      let lowLeft = null;
+      for (let idx = 0; idx < perm.length; idx++) {
+        const w = perm[idx]; // new value
+        const ov = w < Rval ? w : w + 1; // old value it came from
+        const spec = { g: groupEls[idx], ox: X(posOld[ov]), oy: Y(ov), nx: X(idx), ny: Y(w) };
+        specs.push(spec);
+        if (ov === Lval) lowLeft = spec;
+      }
+
+      const ghost = svgEl("g", { class: "permpt" });
+      ghost.appendChild(svgEl("circle", { cx: X(posOld[Rval]), cy: Y(Rval), r: 11, class: "permdot" }));
+      const glbl = svgEl("text", {
+        x: X(posOld[Rval]),
+        y: Y(Rval),
+        class: "permlabel",
+        "text-anchor": "middle",
+        "dominant-baseline": "central",
+      });
+      glbl.textContent = String(Rval);
+      ghost.appendChild(glbl);
+      next.appendChild(ghost);
+
+      const vb0 = cropVB(oldPerm.length).split(" ").map(Number);
+      const vb1 = cropVB(n).split(" ").map(Number);
+      const e0 = 0.5; // phase A: the two points meet; phase B: the grid reflows
+      next.style.overflow = "hidden";
+      const frame = (e) => {
+        const eA = Math.min(1, e / e0);
+        const eB = Math.max(0, (e - e0) / (1 - e0));
+        for (const s of specs) {
+          let x, y;
+          if (s === lowLeft) {
+            if (e < e0) {
+              x = lerp(s.ox, meet.x, eA); // slide right, same row
+              y = s.oy;
+            } else {
+              x = lerp(meet.x, s.nx, eB);
+              y = lerp(meet.y, s.ny, eB);
+            }
+          } else if (e < e0) {
+            x = s.ox;
+            y = s.oy;
+          } else {
+            x = lerp(s.ox, s.nx, eB);
+            y = lerp(s.oy, s.ny, eB);
+          }
+          s.g.setAttribute("transform", `translate(${x - s.nx},${y - s.ny})`);
+        }
+        const gy = lerp(Y(Rval), meet.y, eA); // ghost slides straight down and fades
+        ghost.setAttribute("transform", `translate(0,${gy - Y(Rval)})`);
+        ghost.style.opacity = String(1 - eA);
+        next.setAttribute("viewBox", vb0.map((o, k) => lerp(o, vb1[k], eB)).join(" "));
+      };
+      frame(0);
+      cancelAnim = tween(520, frame, () => {
+        next.style.overflow = "";
+        for (const s of specs) s.g.removeAttribute("transform");
+        ghost.remove();
+        cancelAnim = null;
+        if (frameN !== n) setPath(path);
+      });
+    }
+
     const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
     if (ed && ed.type === "swap") animateSwap(permutationFromPath(opts.prevPath), perm, geom.Y, groupEls);
+    else if (ed && ed.type === "remove" && ed.kind === "valley" && oldPerm) animateValleyRemove(ed);
     else if (oldPerm && ed) animateResize(ed);
   }
 
@@ -255,60 +361,6 @@ export function create(container, callbacks) {
         cancelAnim = null;
       }
     );
-  }
-
-  function hideAfford() {
-    hideAffordButton(plus);
-    hideAffordButton(minus);
-    reshape.style.visibility = "hidden";
-    reshape.onclick = null;
-  }
-
-  // Hover a point that can be removed (a value pushed then popped at once) for
-  // a "−"; otherwise offer a "+" at the nearest column gap to insert a value,
-  // plus a reshape handle below it when swapping the two columns stays valid.
-  function updateAfford(e) {
-    if (!geom) return;
-    const { X, Y, unit, pad, n, W, perm, openOf, closeOf, downIdx, path } = geom;
-    const rect = svg.getBoundingClientRect();
-    const vbx = ((e.clientX - rect.left) / rect.width) * W;
-    const vby = ((e.clientY - rect.top) / rect.height) * W; // viewBox is square
-    hideAfford();
-
-    const i = Math.max(0, Math.min(n - 1, Math.floor((vbx - pad) / unit)));
-    const v = perm[i];
-    if (v !== undefined && closeOf[v - 1] === openOf[v - 1] + 1) {
-      const dist = Math.hypot(vbx - X(i), vby - Y(v));
-      if (dist < unit * 0.6) {
-        showAffordButton(minus, X(i), Y(v) - 18, callbacks.onEdit, () => ({
-          type: "remove",
-          kind: "peak",
-          at: openOf[v - 1],
-        }));
-        return;
-      }
-    }
-    const g = Math.max(0, Math.min(n, Math.round((vbx - pad) / unit)));
-    showAffordButton(plus, pad + g * unit, pad - 13, callbacks.onEdit, () => ({
-      type: "insert",
-      kind: "peak",
-      at: g < n ? downIdx[g] : path.length,
-    }));
-
-    if (g >= 1 && g <= n - 1) {
-      const swapped = perm.slice();
-      [swapped[g - 1], swapped[g]] = [swapped[g], swapped[g - 1]];
-      const moved = pathFromPermutation(swapped);
-      if (moved) {
-        reshape.setAttribute("cx", pad + g * unit);
-        reshape.setAttribute("cy", pad + n * unit + 13);
-        reshape.style.visibility = "visible";
-        reshape.onclick = (ev) => {
-          ev.stopPropagation();
-          callbacks.onEdit({ type: "set", path: moved });
-        };
-      }
-    }
   }
 
   function showBox(range) {
@@ -346,6 +398,7 @@ export function create(container, callbacks) {
       showBox(range);
     },
     destroy() {
+      if (menu) menu.destroy();
       if (svg) svg.remove();
     },
   };

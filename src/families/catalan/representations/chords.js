@@ -1,21 +1,12 @@
 import { analyze, subtreeRange } from "../model.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import {
-  makeRegistry,
-  register,
-  applyHighlight,
-  makeInteractive,
-  makeAffordButton,
-  showAffordButton,
-  hideAffordButton,
-  tween,
-} from "../../../core/view.js";
+import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween } from "../../../core/view.js";
 
 export const meta = {
   id: "chords",
   name: "Non-crossing chords",
   blurb:
-    "2n points on a circle joined by n non-crossing chords — the bracket matching, chord i joining point openOf(i) to closeOf(i). Hover an arc gap to add a chord, or a short chord to remove it.",
+    "2n points on a circle joined by n non-crossing chords — the bracket matching, chord i joining point openOf(i) to closeOf(i). Hover just outside the rim between two points to add a chord, or a short chord to remove it.",
 };
 
 export function create(container, callbacks) {
@@ -23,13 +14,13 @@ export function create(container, callbacks) {
   const registry = makeRegistry();
   let currentEls = [];
   let rangeOf = [];
-  let plus = null;
-  let minus = null;
+  let menu = null;
   let geom = null;
   let cancelAnim = null;
 
   function setPath(path, opts = {}) {
     if (cancelAnim) cancelAnim();
+    if (menu) menu.destroy();
     registry.clear();
     currentEls = [];
     const { openOf, closeOf, n } = analyze(path);
@@ -47,6 +38,7 @@ export function create(container, callbacks) {
     geom = { cxc, cyc, R, P, n, PX, PY, openOf, closeOf, path, W };
 
     const next = makeSvg(`0 0 ${W} ${W}`);
+    menu = affordMenu(next, callbacks.onEdit);
 
     const chordEls = [];
     for (let p = 0; p < n; p++) {
@@ -57,8 +49,32 @@ export function create(container, callbacks) {
       next.appendChild(chord);
       const hit = svgEl("line", { x1: PX(a), y1: PY(a), x2: PX(b), y2: PY(b), class: "chord-hit" });
       makeInteractive(hit, p, callbacks, null);
+      // a short chord (adjacent endpoints) is an innermost chord and can be removed
+      if (b === a + 1) {
+        const mx = (PX(a) + PX(b)) / 2;
+        const my = (PY(a) + PY(b)) / 2;
+        menu.anchor(hit, `chord${p}`, mx, my, () => [
+          { cls: "shrink", glyph: "−", x: mx, y: my, produce: () => ({ type: "remove", kind: "peak", at: a }) },
+        ]);
+      }
       next.appendChild(hit);
       chordEls.push([chord, hit]);
+    }
+
+    // Arc gaps: hovering just outside the rim between two adjacent points adds a
+    // new short chord there.
+    for (let s = 0; s < P; s++) {
+      const a = (-90 + ((s + 0.5) * 360) / P) * (Math.PI / 180);
+      const hx = cxc + (R + 2) * Math.cos(a);
+      const hy = cyc + (R + 2) * Math.sin(a);
+      const bx = cxc + (R + 24) * Math.cos(a);
+      const by = cyc + (R + 24) * Math.sin(a);
+      const g = s + 1; // insert before point index g
+      const hit = svgEl("circle", { cx: hx, cy: hy, r: 13, class: "afford-hit" });
+      menu.anchor(hit, `gap${s}`, hx, hy, () => [
+        { cls: "grow", glyph: "+", x: bx, y: by, produce: () => ({ type: "insert", kind: "peak", at: g }) },
+      ]);
+      next.appendChild(hit);
     }
 
     const pointEls = [];
@@ -164,16 +180,6 @@ export function create(container, callbacks) {
       });
     }
 
-    plus = makeAffordButton("grow", "+");
-    minus = makeAffordButton("shrink", "−");
-    next.appendChild(plus);
-    next.appendChild(minus);
-    next.addEventListener("pointermove", onMove);
-    next.addEventListener("pointerleave", () => {
-      hideAffordButton(plus);
-      hideAffordButton(minus);
-    });
-
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
     svg = next;
@@ -227,49 +233,6 @@ export function create(container, callbacks) {
     );
   }
 
-  function onMove(e) {
-    if (!geom) return;
-    const { cxc, cyc, R, P, n, PX, PY, openOf, closeOf, path, W } = geom;
-    const rect = svg.getBoundingClientRect();
-    const vbx = ((e.clientX - rect.left) / rect.width) * W;
-    const vby = ((e.clientY - rect.top) / rect.height) * W;
-    hideAffordButton(plus);
-    hideAffordButton(minus);
-
-    // nearest short chord (adjacent points = a peak) -> remove
-    let best = -1;
-    let bestD = Infinity;
-    let bmx = 0;
-    let bmy = 0;
-    for (let p = 0; p < n; p++) {
-      if (closeOf[p] !== openOf[p] + 1) continue;
-      const mx = (PX(openOf[p]) + PX(closeOf[p])) / 2;
-      const my = (PY(openOf[p]) + PY(closeOf[p])) / 2;
-      const d = Math.hypot(vbx - mx, vby - my);
-      if (d < bestD) {
-        bestD = d;
-        best = p;
-        bmx = mx;
-        bmy = my;
-      }
-    }
-    if (best >= 0 && bestD < 22) {
-      showAffordButton(minus, bmx, bmy, callbacks.onEdit, () => ({ type: "remove", kind: "peak", at: openOf[best] }));
-      return;
-    }
-
-    // otherwise a "+" at the nearest arc gap between two points
-    let t = (Math.atan2(vby - cyc, vbx - cxc) * 180) / Math.PI + 90;
-    t = (((t / 360) % 1) + 1) % 1;
-    t *= P;
-    const s = Math.floor(t); // between point s and s+1
-    const g = s + 1; // insert new points before index g
-    const gapAngle = (-90 + ((s + 0.5) * 360) / P) * (Math.PI / 180);
-    const gx = cxc + (R + 16) * Math.cos(gapAngle);
-    const gy = cyc + (R + 16) * Math.sin(gapAngle);
-    showAffordButton(plus, gx, gy, callbacks.onEdit, () => ({ type: "insert", kind: "peak", at: g }));
-  }
-
   return {
     setPath,
     highlight(pairId) {
@@ -277,6 +240,7 @@ export function create(container, callbacks) {
       currentEls = applyHighlight(registry, currentEls, range);
     },
     destroy() {
+      if (menu) menu.destroy();
       if (svg) svg.remove();
     },
   };

@@ -1,7 +1,7 @@
 import { U, D, analyze } from "../model.js";
 import { applyEdit } from "../edits.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import { makeInteractive, tween } from "../../../core/view.js";
+import { makeInteractive, affordMenu, tween } from "../../../core/view.js";
 
 export const meta = {
   id: "dyck",
@@ -19,11 +19,12 @@ export function create(container, callbacks) {
   let pairBand = null; // filled trapezoid between the pair's `/` and `\`
   let betweenBand = null; // nested content sitting on top of the trapezoid
   let geom = null;
-  let afford = null; // { ring, btnPeak, btnValley, btnRemovePeak, btnRemoveValley, reshape }
+  let menu = null;
   let cancelAnim = null;
 
   function setPath(path, opts = {}) {
     if (cancelAnim) cancelAnim();
+    if (menu) menu.destroy();
     const { openOf, closeOf } = analyze(path);
 
     // A swap (elementary move) keeps n fixed and moves exactly one vertex; a
@@ -46,6 +47,7 @@ export function create(container, callbacks) {
     geom = { X, Y, pts, openOf, closeOf, path, W, maxH };
 
     const next = makeSvg(`0 0 ${W} ${H}`);
+    menu = affordMenu(next, callbacks.onEdit);
 
     // baseline (widened to cover both shapes while a resize is in flight)
     const axisLen = Math.max(path.length, oldPts ? oldPts.length - 1 : 0);
@@ -96,18 +98,50 @@ export function create(container, callbacks) {
       stepEls.push(seg);
     }
 
-    // node dots at each lattice point
+    // The elementary (peak<->valley) swap at step `at`, offered as a menu option
+    // only where it stays valid.
+    const reshapeOption = (at, x, y) => {
+      const swap = { type: "swap", at };
+      if (!applyEdit(path, swap)) return null;
+      return { cls: "reshape", glyph: "↕", x, y, produce: () => swap };
+    };
+    // Every sensible option for lattice vertex `v`, laid out radially so they
+    // never collide: insert a peak above (always) and a valley below (only off
+    // the axis); peaks and valleys additionally remove (left) and swap (right).
+    const vertexOptions = (v) => {
+      const h = pts[v];
+      const isPeak = v >= 1 && v <= path.length - 1 && path[v - 1] === U && path[v] === D;
+      const isValley = v >= 1 && v <= path.length - 1 && path[v - 1] === D && path[v] === U;
+      const opts = [
+        { cls: "grow", glyph: "+", x: X(v), y: Y(h) - 26, produce: () => ({ type: "insert", kind: "peak", at: v }) },
+      ];
+      if (h >= 1)
+        opts.push({ cls: "grow", glyph: "+", x: X(v), y: Y(h) + 26, produce: () => ({ type: "insert", kind: "valley", at: v }) });
+      if (isPeak || isValley) {
+        opts.push({
+          cls: "shrink",
+          glyph: "−",
+          x: X(v) - 26,
+          y: Y(h),
+          produce: () => ({ type: "remove", kind: isPeak ? "peak" : "valley", at: v - 1 }),
+        });
+        opts.push(reshapeOption(v - 1, X(v) + 26, Y(h)));
+      }
+      return opts;
+    };
+
+    // node dots + per-vertex edit menus at each lattice point
     const dotEls = [];
     for (let j = 0; j <= path.length; j++) {
-      const dot = svgEl("circle", { cx: X(j), cy: Y(pts[j]), r: 2.5, class: "vertex" });
+      const cx = X(j);
+      const cy = Y(pts[j]);
+      const dot = svgEl("circle", { cx, cy, r: 2.5, class: "vertex" });
       next.appendChild(dot);
       dotEls.push(dot);
+      const halo = svgEl("circle", { cx, cy, r: 16, class: "afford-hit" });
+      menu.anchor(halo, `v${j}`, cx, cy, () => vertexOptions(j));
+      next.appendChild(halo);
     }
-
-    // affordance layer, on top, hidden until the pointer moves over the figure
-    afford = buildAffordances(next);
-    next.addEventListener("pointermove", (ev) => updateAfford(ev));
-    next.addEventListener("pointerleave", hideAfford);
 
     if (svg) container.replaceChild(next, svg);
     else container.appendChild(next);
@@ -296,102 +330,6 @@ export function create(container, callbacks) {
     });
   }
 
-  function buildAffordances(parent) {
-    const g = svgEl("g", { class: "afford-layer" });
-    const ring = svgEl("circle", { r: 6, class: "afford-ring", visibility: "hidden" });
-    g.appendChild(ring);
-    const mkBtn = (cls, glyph) => {
-      const btn = svgEl("g", { class: `afford ${cls}`, visibility: "hidden" });
-      btn.appendChild(svgEl("circle", { r: 11, cx: 0, cy: 0 }));
-      const t = svgEl("text", {
-        x: 0,
-        y: 0,
-        class: "afford-glyph",
-        "text-anchor": "middle",
-        "dominant-baseline": "central",
-      });
-      t.textContent = glyph;
-      btn.appendChild(t);
-      g.appendChild(btn);
-      return btn;
-    };
-    const btnPeak = mkBtn("grow", "+");
-    const btnValley = mkBtn("grow", "+");
-    const btnRemovePeak = mkBtn("shrink", "−");
-    const btnRemoveValley = mkBtn("shrink", "−");
-    const reshape = svgEl("circle", { r: 7, class: "afford-reshape", visibility: "hidden" });
-    g.appendChild(reshape);
-    parent.appendChild(g);
-    return { ring, btnPeak, btnValley, btnRemovePeak, btnRemoveValley, reshape };
-  }
-
-  function placeBtn(btn, x, y, onClick) {
-    btn.setAttribute("transform", `translate(${x},${y})`);
-    btn.style.visibility = "visible";
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      const p = onClick();
-      if (p) callbacks.onEdit(p);
-    };
-  }
-
-  function hideAfford() {
-    if (!afford) return;
-    afford.ring.style.visibility = "hidden";
-    for (const b of [afford.btnPeak, afford.btnValley, afford.btnRemovePeak, afford.btnRemoveValley]) {
-      b.style.visibility = "hidden";
-      b.onclick = null;
-    }
-    afford.reshape.style.visibility = "hidden";
-    afford.reshape.onclick = null;
-  }
-
-  function updateAfford(e) {
-    if (!afford || !geom) return;
-    const { X, Y, pts, path, W } = geom;
-    const rect = svg.getBoundingClientRect();
-    const vbX = ((e.clientX - rect.left) / rect.width) * W;
-    let v = Math.round((vbX - padX) / unit);
-    v = Math.max(0, Math.min(path.length, v));
-    const h = pts[v];
-
-    hideAfford();
-    afford.ring.setAttribute("cx", X(v));
-    afford.ring.setAttribute("cy", Y(h));
-    afford.ring.style.visibility = "visible";
-
-    const peakApex = v >= 1 && v <= path.length - 1 && path[v - 1] === U && path[v] === D;
-    const valleyPt = v >= 1 && v <= path.length - 1 && path[v - 1] === D && path[v] === U;
-
-    // Peaks and valleys are the removal sites (with a reshape at their corner);
-    // every other vertex is where a new peak or valley can be inserted.
-    if (peakApex) {
-      placeBtn(afford.btnRemovePeak, X(v), Y(h) - 22, () => ({ type: "remove", kind: "peak", at: v - 1 }));
-      showReshape(v - 1, X(v) + 16, Y(h) + 2);
-    } else if (valleyPt) {
-      placeBtn(afford.btnRemoveValley, X(v), Y(h) + 22, () => ({ type: "remove", kind: "valley", at: v - 1 }));
-      showReshape(v - 1, X(v) + 16, Y(h) - 2);
-    } else {
-      placeBtn(afford.btnPeak, X(v), Y(h + 1) - 22, () => ({ type: "insert", kind: "peak", at: v }));
-      if (h >= 1) {
-        placeBtn(afford.btnValley, X(v), Y(h - 1) + 22, () => ({ type: "insert", kind: "valley", at: v }));
-      }
-    }
-  }
-
-  // Offer the elementary (peak<->valley) swap at step `at` when it stays valid.
-  function showReshape(at, cx, cy) {
-    const swap = { type: "swap", at };
-    if (!applyEdit(geom.path, swap)) return;
-    afford.reshape.setAttribute("cx", cx);
-    afford.reshape.setAttribute("cy", cy);
-    afford.reshape.style.visibility = "visible";
-    afford.reshape.onclick = (ev) => {
-      ev.stopPropagation();
-      callbacks.onEdit(swap);
-    };
-  }
-
   function showRegions(pairId) {
     if (!pairBand || !betweenBand || !geom) return;
     if (pairId === null || pairId === undefined) {
@@ -431,6 +369,7 @@ export function create(container, callbacks) {
     },
     destroy() {
       if (cancelAnim) cancelAnim();
+      if (menu) menu.destroy();
       if (svg) svg.remove();
     },
   };

@@ -9,6 +9,113 @@
 
 import { svgEl } from "./svg.js";
 
+// ---- affordance menu ------------------------------------------------------
+//
+// A hover-driven radial menu of edit affordances. Create one per rendered
+// figure, then register each hoverable node:
+//
+//   const menu = affordMenu(svgRoot, callbacks.onEdit);
+//   menu.anchor(hitEl, key, cx, cy, () => [
+//     { cls: "grow",   glyph: "+", x, y, produce: () => edit },
+//     { cls: "shrink", glyph: "−", x, y, produce: () => edit },
+//   ]);
+//
+// On hover the options animate outward from (cx,cy) to their (x,y); the pointer
+// can then travel to any of them and click. A short grace period keeps the menu
+// alive while the pointer crosses the gap from the node to a button, so hovering
+// "with a bit of slack" doesn't dismiss it. Moving onto a different node's
+// anchor opens that menu and closes this one.
+
+const AFFORD_R = 11; // button radius
+const AFFORD_GRACE = 160; // ms the menu survives after the pointer leaves it
+
+export function affordMenu(root, onEdit) {
+  // Buttons are appended straight to `root` on open (so they always render on
+  // top of the static figure) and removed on close.
+  let current = []; // button <g> elements currently shown
+  let openKey = null;
+  let closeTimer = 0;
+  let cancelAnim = null;
+
+  function clear() {
+    if (cancelAnim) {
+      cancelAnim();
+      cancelAnim = null;
+    }
+    clearTimeout(closeTimer);
+    for (const el of current) el.remove();
+    current = [];
+    openKey = null;
+  }
+  const cancelClose = () => clearTimeout(closeTimer);
+  const scheduleClose = () => {
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(clear, AFFORD_GRACE);
+  };
+
+  function open(key, cx, cy, options) {
+    if (openKey === key) {
+      cancelClose();
+      return;
+    }
+    clear();
+    openKey = key;
+
+    const btns = options.map((o) => {
+      const g = svgEl("g", { class: `afford ${o.cls}` });
+      g.appendChild(svgEl("circle", { r: AFFORD_R }));
+      const t = svgEl("text", {
+        class: "afford-glyph",
+        "text-anchor": "middle",
+        "dominant-baseline": "central",
+      });
+      t.textContent = o.glyph;
+      g.appendChild(t);
+      g.addEventListener("pointerenter", cancelClose);
+      g.addEventListener("pointerleave", scheduleClose);
+      g.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const p = o.produce();
+        if (p) onEdit(p);
+      });
+      root.appendChild(g);
+      return { g, o };
+    });
+    current = btns.map((b) => b.g);
+
+    const lerp = (a, b, e) => a + (b - a) * e;
+    const place = (e) => {
+      for (const { g, o } of btns) {
+        const x = lerp(cx, o.x, e);
+        const y = lerp(cy, o.y, e);
+        g.setAttribute("transform", `translate(${x},${y}) scale(${lerp(0.4, 1, e)})`);
+        g.style.opacity = String(e);
+      }
+    };
+    place(0);
+    cancelAnim = tween(200, place, () => {
+      cancelAnim = null;
+    });
+  }
+
+  return {
+    // Register `el` as the node that opens a menu of `buildOptions()` (an array,
+    // possibly containing nulls, which are dropped) expanding from (cx,cy).
+    anchor(el, key, cx, cy, buildOptions) {
+      el.addEventListener("pointerenter", () => {
+        cancelClose();
+        const options = buildOptions().filter(Boolean);
+        if (options.length) open(key, cx, cy, options);
+      });
+      el.addEventListener("pointerleave", scheduleClose);
+    },
+    clear,
+    destroy() {
+      clear();
+    },
+  };
+}
+
 // A hover-revealed grow/shrink button. cls is "grow" (amber +) or "shrink"
 // (red −). Reused across representations.
 export function makeAffordButton(cls, glyph) {
