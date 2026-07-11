@@ -8,6 +8,9 @@ import {
   makeInteractive,
   affordMenu,
   tween,
+  dispatchEdit,
+  panViewBox,
+  stepDiagram,
 } from "../../../core/view.js";
 
 export const meta = {
@@ -100,26 +103,19 @@ export function create(container, callbacks) {
       const oldH = Math.max(oldLayout.height, 1) * unit + pad * 2;
       let moved = false;
       for (const nd of nodes) {
-        nd.d0 = oldDepthByX.has(nd.x) ? oldDepthByX.get(nd.x) : nd.depth;
-        nd.d1 = nd.depth;
-        if (nd.d0 !== nd.d1) moved = true;
+        const d0 = oldDepthByX.has(nd.x) ? oldDepthByX.get(nd.x) : nd.depth;
+        nd.sx = X(nd.x); // in-order column is fixed; only depth (y) moves
+        nd.sy = Y(d0);
+        nd.ex = X(nd.x);
+        nd.ey = Y(nd.depth);
+        if (d0 !== nd.depth) moved = true;
       }
       if (!moved) return false;
 
-      const place = (nd, d) => {
-        if (nd.leaf) nd.el.setAttribute("y", Y(d) - 5);
-        else nd.el.setAttribute("cy", Y(d));
-      };
+      const pan = panViewBox(next, [0, 0, oldW, oldH], [0, 0, W, H]);
       const frame = (t) => {
-        next.setAttribute("viewBox", `0 0 ${oldW + (W - oldW) * t} ${oldH + (H - oldH) * t}`);
-        for (const nd of nodes) {
-          nd.cd = nd.d0 + (nd.d1 - nd.d0) * t;
-          place(nd, nd.cd);
-        }
-        for (const e of edges) {
-          e.el.setAttribute("y1", Y(e.from.cd));
-          e.el.setAttribute("y2", Y(e.to.cd));
-        }
+        pan(t);
+        stepDiagram(t, nodes, edges, place);
       };
       frame(0);
       cancelAnim = tween(400, frame, () => {
@@ -139,20 +135,16 @@ export function create(container, callbacks) {
         el.setAttribute("cy", py);
       }
     };
-    // Slide every node from its start point to its final one, then redraw every
-    // branch from the moved endpoints. `pointOf` returns [start, final] per node.
-    const morphFrame = (t, pointOf) => {
+    const place = (nd, px, py) => putNode(nd.el, nd.leaf, px, py);
+    // Seed each node's start/end pixel points from `pointOf` (which returns
+    // [start, final]); stepDiagram then tweens between them and redraws branches.
+    const setPoints = (pointOf) => {
       for (const nd of nodes) {
         const [s, f] = pointOf(nd);
-        nd.cx = s[0] + (f[0] - s[0]) * t;
-        nd.cy = s[1] + (f[1] - s[1]) * t;
-        putNode(nd.el, nd.leaf, nd.cx, nd.cy);
-      }
-      for (const e of edges) {
-        e.el.setAttribute("x1", e.from.cx);
-        e.el.setAttribute("y1", e.from.cy);
-        e.el.setAttribute("x2", e.to.cx);
-        e.el.setAttribute("y2", e.to.cy);
+        nd.sx = s[0];
+        nd.sy = s[1];
+        nd.ex = f[0];
+        nd.ey = f[1];
       }
     };
     const oldFrame = (prevPath) => {
@@ -174,21 +166,22 @@ export function create(container, callbacks) {
       const p = leaf.x;
       const d = leaf.depth;
       const sprout = (nd) => nd.x >= p && nd.x <= p + 2;
-      const pointOf = (nd) => {
+      setPoints((nd) => {
         const f = [X(nd.x), Y(nd.depth)];
         if (nd.x < p) return [f, f]; // static
         if (nd.x <= p + 2) return [[X(p), Y(d)], f]; // unfolds from the old leaf
         return [[X(nd.x - 2), Y(nd.depth)], f]; // tail slid in from the left
-      };
+      });
 
       const ghost = svgEl("rect", { width: 10, height: 10, class: "leaf" });
       next.appendChild(ghost);
       putNode(ghost, true, X(p), Y(d));
 
       next.style.overflow = "hidden";
+      const pan = panViewBox(next, [0, 0, oldW, oldH], [0, 0, W, H]);
       const frame = (t) => {
-        next.setAttribute("viewBox", `0 0 ${lerp(oldW, W, t)} ${lerp(oldH, H, t)}`);
-        morphFrame(t, pointOf);
+        pan(t);
+        stepDiagram(t, nodes, edges, place);
         for (const nd of nodes) if (sprout(nd)) nd.el.style.opacity = String(t);
         ghost.style.opacity = String(1 - t);
       };
@@ -213,12 +206,12 @@ export function create(container, callbacks) {
       const d = N.depth;
       const p = xN - 1; // the merged leaf's new in-order index
       const merge = [X(xN), Y(d)]; // where N sat; the cherry folds up here
-      const pointOf = (nd) => {
+      setPoints((nd) => {
         const f = [X(nd.x), Y(nd.depth)];
         if (nd.x < p) return [f, f]; // static
         if (nd.x === p) return [[...merge], f]; // merged leaf slides out of N's spot
         return [[X(nd.x + 2), Y(nd.depth)], f]; // tail slid in from the right
-      };
+      });
       const merged = nodes.find((nd) => nd.x === p);
 
       const gC = svgEl("circle", { r: 13, class: "treenode" });
@@ -230,9 +223,10 @@ export function create(container, callbacks) {
       const child = (col, t) => [lerp(X(col), merge[0], t), lerp(Y(d + 1), merge[1], t)];
 
       next.style.overflow = "hidden";
+      const pan = panViewBox(next, [0, 0, oldW, oldH], [0, 0, W, H]);
       const frame = (t) => {
-        next.setAttribute("viewBox", `0 0 ${lerp(oldW, W, t)} ${lerp(oldH, H, t)}`);
-        morphFrame(t, pointOf);
+        pan(t);
+        stepDiagram(t, nodes, edges, place);
         if (merged) merged.el.style.opacity = String(t); // fade the new leaf in
         const l1 = child(xN - 1, t);
         const l2 = child(xN + 1, t);
@@ -261,10 +255,15 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const e = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
-    if (e && e.type === "swap") animateSwap(opts.prevPath);
-    else if (e && e.type === "insert") animateSprout(opts.prevPath, e);
-    else if (e && e.type === "remove") animatePrune(opts.prevPath, e);
+    // A rotation and an elementary swap both preserve in-order position and only
+    // shift depths, so animateSwap handles either; the tree's own click emits a
+    // "rotate", so it must be caught here too or the primary edit would snap.
+    dispatchEdit(opts, {
+      swap: (edit, prevPath) => animateSwap(prevPath),
+      rotate: (edit, prevPath) => animateSwap(prevPath),
+      insert: (edit, prevPath) => animateSprout(prevPath, edit),
+      remove: (edit, prevPath) => animatePrune(prevPath, edit),
+    });
   }
 
   return {

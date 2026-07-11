@@ -9,6 +9,7 @@ import {
   showAffordButton,
   hideAffordButton,
   tween,
+  dispatchEdit,
 } from "../../../core/view.js";
 
 const lerp = (a, b, e) => a + (b - a) * e;
@@ -212,8 +213,10 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
-    if (ed) animateResize(ed, opts.prevPath);
+    // Any single-box change (insert peak/valley, or the "set" that shrinks) is
+    // one animator; it self-filters non-single-box edits, so a `default` catch
+    // covers every type the SYT pair can meaningfully morph through.
+    dispatchEdit(opts, { default: (edit, prevPath) => animateResize(edit, prevPath) });
   }
 
   function showAfford() {

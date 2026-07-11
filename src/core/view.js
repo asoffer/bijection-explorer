@@ -166,6 +166,72 @@ export function tween(duration, onFrame, onDone) {
   return () => cancelAnimationFrame(raf);
 }
 
+// Route a just-applied edit to the matching animation handler.
+//
+// Every view's setPath ends with the same shape: "if this setPath came from an
+// animated edit, morph to it; otherwise snap." This centralizes the guard and,
+// crucially, makes coverage EXPLICIT — an edit type with no handler falls
+// through and dispatchEdit returns false, so the caller snaps on purpose. That
+// is the failure mode that let tree rotations go unanimated: a hand-written
+// `if (e.type === "swap")` chain silently ignored the "rotate" it actually got.
+//
+//   const animated = dispatchEdit(opts, {
+//     insert: (edit, prevPath) => animateSprout(prevPath, edit),
+//     remove: (edit, prevPath) => animatePrune(prevPath, edit),
+//     swap:   (edit, prevPath) => animateSwap(prevPath),
+//     rotate: (edit, prevPath) => animateSwap(prevPath), // same depth-only morph
+//   });
+//   if (!animated) snapToFinalLayout();
+//
+// Handlers receive (edit, prevPath) and share the enclosing setPath scope for
+// everything else. A handler may return false to decline (e.g. the edit isn't a
+// clean single-step change here), in which case dispatchEdit reports false so
+// the caller can snap. `handlers.default` catches any type without its own key
+// (used by views like the SYT pair whose one animator self-filters).
+export function dispatchEdit(opts, handlers) {
+  if (!opts.animate || !opts.edit || !opts.prevPath) return false;
+  const h = handlers[opts.edit.type] || handlers.default;
+  if (!h) return false;
+  return h(opts.edit, opts.prevPath) !== false;
+}
+
+// ---- node-link morph -------------------------------------------------------
+//
+// The node-diagram views (binary tree, plane tree) all animate a reshape the
+// same way: tween every node from a start pixel point to its final one, then
+// redraw every edge from its endpoints' fresh points, panning the viewBox
+// between the old and new frames. These two helpers hold that shared mechanic
+// so each view supplies only what's rep-specific — how a node's start/end
+// points are computed, and how a node's element is placed.
+
+// Pan a viewBox between two [x, y, w, h] frames; returns an onFrame(e) fn.
+export function panViewBox(root, from, to) {
+  return (e) => root.setAttribute("viewBox", from.map((o, i) => o + (to[i] - o) * e).join(" "));
+}
+
+// Default edge writer: an SVG <line> drawn from node a's live point to node b's.
+export function drawLineEdge(el, a, b) {
+  el.setAttribute("x1", a.cx);
+  el.setAttribute("y1", a.cy);
+  el.setAttribute("x2", b.cx);
+  el.setAttribute("y2", b.cy);
+}
+
+// One frame of a node-link morph, at progress e in [0,1]. Each node in `nodes`
+// carries start/end pixel coords {sx, sy, ex, ey}; the interpolated point is
+// stored back on node.cx/cy (so edges can read it) and handed to
+// place(node, x, y), which writes it onto the node's element(s). Each edge in
+// `edges` is { el, from, to } with from/to being nodes; drawEdge(el, from, to)
+// redraws it from their live points (defaults to an SVG line).
+export function stepDiagram(e, nodes, edges, place, drawEdge = drawLineEdge) {
+  for (const nd of nodes) {
+    nd.cx = nd.sx + (nd.ex - nd.sx) * e;
+    nd.cy = nd.sy + (nd.ey - nd.sy) * e;
+    place(nd, nd.cx, nd.cy);
+  }
+  for (const ed of edges) drawEdge(ed.el, ed.from, ed.to);
+}
+
 export function makeRegistry() {
   // pairId -> array of DOM elements that should light up together.
   return new Map();

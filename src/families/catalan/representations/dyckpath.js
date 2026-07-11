@@ -1,7 +1,7 @@
 import { U, D, analyze } from "../model.js";
 import { applyEdit } from "../edits.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import { makeInteractive, affordMenu, tween } from "../../../core/view.js";
+import { makeInteractive, affordMenu, tween, dispatchEdit } from "../../../core/view.js";
 
 export const meta = {
   id: "dyck",
@@ -147,9 +147,14 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    if (swap) animateSwap(swap.at, oldPts, pts, Y, stepEls, dotEls, { W, maxH });
-    else if (resize && resize.type === "insert") animateInsert(next, resize, oldPts, pts, stepEls, dotEls);
-    else if (resize) animateRemove(next, resize, oldPts, pts, stepEls, dotEls, axis);
+    // (`swap`/`resize`/`oldPts` were derived up top because the viewBox frame is
+    // sized to fit both the old and new shapes; the tail just routes each type to
+    // its animator.)
+    dispatchEdit(opts, {
+      swap: (edit) => animateSwap(edit.at, oldPts, pts, Y, stepEls, dotEls, { W, maxH }),
+      insert: (edit) => animateInsert(next, edit, oldPts, pts, stepEls, dotEls),
+      remove: (edit) => animateRemove(next, edit, oldPts, pts, stepEls, dotEls, axis),
+    });
   }
 
   function prefixHeights(p) {

@@ -1,7 +1,7 @@
 import { U, analyze, subtreeRange } from "../model.js";
 import { applyEdit } from "../edits.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween } from "../../../core/view.js";
+import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween, dispatchEdit } from "../../../core/view.js";
 
 export const meta = {
   id: "parens",
@@ -106,10 +106,11 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const e = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
-    if (e && e.type === "swap") animateSwap(e.at, cx, glyphEls);
-    else if (e && (e.type === "insert" || e.type === "remove"))
-      animateResize(next, e, glyphEls, opts.prevPath);
+    dispatchEdit(opts, {
+      swap: (edit) => animateSwap(edit.at, cx, glyphEls),
+      insert: (edit, prevPath) => animateResize(next, edit, glyphEls, prevPath),
+      remove: (edit, prevPath) => animateResize(next, edit, glyphEls, prevPath),
+    });
   }
 
   // Grow / shrink by one bracket pair. The row is left-anchored, so brackets

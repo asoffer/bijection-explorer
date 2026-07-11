@@ -7,6 +7,9 @@ import {
   makeInteractive,
   affordMenu,
   tween,
+  dispatchEdit,
+  panViewBox,
+  stepDiagram,
 } from "../../../core/view.js";
 
 export const meta = {
@@ -143,6 +146,14 @@ export function create(container, callbacks) {
       next.appendChild(halo);
     }
 
+    // How a vertex's dot is placed, and the parent→child edges to redraw during
+    // a morph (each vertex owns the edge coming down from its parent).
+    const placeVert = (v, x, y) => {
+      v.dotEl.setAttribute("cx", x);
+      v.dotEl.setAttribute("cy", y);
+    };
+    const morphEdges = verts.filter((v) => v.edgeEl && v.parent).map((v) => ({ el: v.edgeEl, from: v.parent, to: v }));
+
     // A swap promotes a vertex from child-of-X to sibling-of-X (or the reverse):
     // its subtree slides to the new location and its edge swings from the old
     // parent to the new one. Match vertices by pair id, tween all positions, and
@@ -173,21 +184,10 @@ export function create(container, callbacks) {
       }
       if (!moved) return false;
 
+      const pan = panViewBox(next, [0, 0, oldW, oldH], [0, 0, W, H]);
       const frame = (e) => {
-        next.setAttribute("viewBox", `0 0 ${oldW + (W - oldW) * e} ${oldH + (H - oldH) * e}`);
-        for (const v of verts) {
-          v.cx = v.sx + (v.ex - v.sx) * e;
-          v.cy = v.sy + (v.ey - v.sy) * e;
-          v.dotEl.setAttribute("cx", v.cx);
-          v.dotEl.setAttribute("cy", v.cy);
-        }
-        for (const v of verts) {
-          if (!v.edgeEl || !v.parent) continue;
-          v.edgeEl.setAttribute("x1", v.parent.cx);
-          v.edgeEl.setAttribute("y1", v.parent.cy);
-          v.edgeEl.setAttribute("x2", v.cx);
-          v.edgeEl.setAttribute("y2", v.cy);
-        }
+        pan(e);
+        stepDiagram(e, verts, morphEdges, placeVert);
       };
       frame(0);
       cancelAnim = tween(400, frame, () => {
@@ -227,23 +227,11 @@ export function create(container, callbacks) {
         cancelAnim = null;
       });
     };
-    // Move every vertex from (sx,sy) to (ex,ey), then redraw each edge from its
-    // (interpolated) parent and child; pan the viewBox between the two frames.
+    // Move every vertex from (sx,sy) to (ex,ey), redraw each edge from its
+    // (interpolated) parent and child, and pan the viewBox between the frames.
     const stepVerts = (e, oldW, oldH) => {
-      next.setAttribute("viewBox", `0 0 ${lerp(oldW, W, e)} ${lerp(oldH, H, e)}`);
-      for (const v of verts) {
-        v.cx = lerp(v.sx, v.ex, e);
-        v.cy = lerp(v.sy, v.ey, e);
-        v.dotEl.setAttribute("cx", v.cx);
-        v.dotEl.setAttribute("cy", v.cy);
-      }
-      for (const v of verts) {
-        if (!v.edgeEl || !v.parent) continue;
-        v.edgeEl.setAttribute("x1", v.parent.cx);
-        v.edgeEl.setAttribute("y1", v.parent.cy);
-        v.edgeEl.setAttribute("x2", v.cx);
-        v.edgeEl.setAttribute("y2", v.cy);
-      }
+      panViewBox(next, [0, 0, oldW, oldH], [0, 0, W, H])(e);
+      stepDiagram(e, verts, morphEdges, placeVert);
     };
 
     // Insert: a new child buds off its parent. Every other vertex slides from its
@@ -327,10 +315,11 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
-    if (ed && ed.type === "swap") animateSwap(opts.prevPath);
-    else if (ed && ed.type === "insert") animateGrow(opts.prevPath, ed);
-    else if (ed && ed.type === "remove") animateShrink(opts.prevPath, ed);
+    dispatchEdit(opts, {
+      swap: (edit, prevPath) => animateSwap(prevPath),
+      insert: (edit, prevPath) => animateGrow(prevPath, edit),
+      remove: (edit, prevPath) => animateShrink(prevPath, edit),
+    });
   }
 
   return {

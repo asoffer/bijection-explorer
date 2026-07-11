@@ -1,6 +1,6 @@
 import { analyze, subtreeRange } from "../model.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween } from "../../../core/view.js";
+import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween, dispatchEdit } from "../../../core/view.js";
 
 export const meta = {
   id: "chords",
@@ -184,9 +184,11 @@ export function create(container, callbacks) {
     else container.appendChild(next);
     svg = next;
 
-    const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
-    if (ed && ed.type === "swap") animateSwap(analyze(opts.prevPath), chordEls);
-    else if (ed && (ed.type === "insert" || ed.type === "remove")) animateResize(ed, opts.prevPath);
+    dispatchEdit(opts, {
+      swap: (edit, prevPath) => animateSwap(analyze(prevPath), chordEls),
+      insert: (edit, prevPath) => animateResize(edit, prevPath),
+      remove: (edit, prevPath) => animateResize(edit, prevPath),
+    });
   }
 
   // A swap reconnects the chords touching the moved point. Points stay fixed, so

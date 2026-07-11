@@ -1,6 +1,6 @@
 import { U, analyze, subtreeRange } from "../model.js";
 import { svgEl, makeSvg } from "../../../core/svg.js";
-import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween } from "../../../core/view.js";
+import { makeRegistry, register, applyHighlight, makeInteractive, affordMenu, tween, dispatchEdit } from "../../../core/view.js";
 
 export const meta = {
   id: "perm",
@@ -335,10 +335,14 @@ export function create(container, callbacks) {
       });
     }
 
-    const ed = opts.animate && opts.edit && opts.prevPath ? opts.edit : null;
-    if (ed && ed.type === "swap") animateSwap(permutationFromPath(opts.prevPath), perm, geom.Y, groupEls);
-    else if (ed && ed.type === "remove" && ed.kind === "valley" && oldPerm) animateValleyRemove(ed);
-    else if (oldPerm && ed) animateResize(ed);
+    // insert / non-valley remove share animateResize; a valley remove is a block
+    // merge (animateValleyRemove). oldPerm is populated exactly for insert/remove,
+    // which is all these handlers touch.
+    dispatchEdit(opts, {
+      swap: (edit, prevPath) => animateSwap(permutationFromPath(prevPath), perm, geom.Y, groupEls),
+      insert: (edit) => animateResize(edit),
+      remove: (edit) => (edit.kind === "valley" ? animateValleyRemove(edit) : animateResize(edit)),
+    });
   }
 
   // A swap exchanges the values sitting in two columns. Each column's x is

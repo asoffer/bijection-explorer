@@ -8,6 +8,7 @@ import {
   makeInteractive,
   affordMenu,
   tween,
+  dispatchEdit,
 } from "../../../core/view.js";
 
 export const meta = {
@@ -291,27 +292,28 @@ export function create(container, callbacks) {
     }
 
     // Knowing the exact edit, the changed vertex is a lookup (earTip). A peak
-    // insert grows and a delete shrinks by one vertex; valley inserts and
-    // "set" reshapes have no clean single-vertex mapping, so they just snap.
-    const edit = opts.edit;
-    let animated = false;
-    if (opts.animate && edit && prev) {
-      if (edit.type === "insert" && edit.kind !== "valley" && M === prev.M + 1) {
+    // insert grows and a delete shrinks by one vertex; a swap or rotate flips a
+    // diagonal. A handler returns false when the edit isn't a clean single-step
+    // change here (valley inserts, "set" reshapes, size mismatches), so those
+    // fall through to a snap.
+    const animated = dispatchEdit(opts, {
+      insert: (edit) => {
+        if (edit.kind === "valley" || M !== prev.M + 1) return false;
         const j = earTip(path, edit.at); // new labelling: the pair opens at `at`
-        if (j >= 0) {
-          animateGrow(j, prev.vpos);
-          animated = true;
-        }
-      } else if (edit.type === "remove" && edit.kind !== "valley" && M === prev.M - 1 && opts.prevPath) {
-        const j = earTip(opts.prevPath, edit.at); // old labelling
-        if (j >= 0) {
-          animateShrink(j, prev.vpos);
-          animated = true;
-        }
-      } else if ((edit.type === "swap" || edit.type === "rotate") && opts.prevPath && M === prev.M) {
-        animated = animateFlip(opts.prevPath);
-      }
-    }
+        if (j < 0) return false;
+        animateGrow(j, prev.vpos);
+        return true;
+      },
+      remove: (edit, prevPath) => {
+        if (edit.kind === "valley" || M !== prev.M - 1) return false;
+        const j = earTip(prevPath, edit.at); // old labelling
+        if (j < 0) return false;
+        animateShrink(j, prev.vpos);
+        return true;
+      },
+      swap: (edit, prevPath) => (M === prev.M ? animateFlip(prevPath) : false),
+      rotate: (edit, prevPath) => (M === prev.M ? animateFlip(prevPath) : false),
+    });
     if (!animated) applyPositions(newVpos);
 
     if (svg) container.replaceChild(next, svg);
